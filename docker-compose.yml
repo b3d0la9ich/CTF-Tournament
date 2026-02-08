@@ -1,0 +1,29 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ctf
+      POSTGRES_USER: ctf
+      POSTGRES_PASSWORD: ctf
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  web:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgres://ctf:ctf@db:5432/ctf?sslmode=disable
+      JWT_SECRET: "change_me_super_secret"
+      PORT: "8080"
+      COOKIE_SECURE: "0"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+    volumes:
+      - ./frontend:/app/static:ro
+
+volumes:
+  db_data:

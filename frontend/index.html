@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>CTF Platform</title>
+  <link rel="stylesheet" href="/static/assets/styles.css">
+</head>
+<body>
+<header><div class="container"><b>CTF Platform</b></div></header>
+<div class="container">
+  <div class="card">
+    <h2>Добро пожаловать!</h2>
+    <p class="small">
+      Сайт для учета участников, рейтинга и проведения CTF-соревнований:
+      матчи (solo/team), заявки, группы, история, админ-панель, рейтинг.
+    </p>
+    <div class="row">
+      <button class="btn" onclick="location.href='/login'">Вход</button>
+      <button class="btn secondary" onclick="location.href='/register'">Регистрация</button>
+      <button class="btn secondary" onclick="location.href='/dashboard'">Личный кабинет</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Возможности</h3>
+    <ul class="small">
+      <li>Пользователь: вкладки матчей, подача заявки, история участия</li>
+      <li>Группы: создать группу, вступать в открытые, выходить</li>
+      <li>Админ: юзеры, логи, очки, матчи CRUD, заявки approve/reject, закрыть матч, победитель вручную</li>
+      <li>Рейтинг всех пользователей по очкам</li>
+      <li>Отчёт по матчу (копирование)</li>
+    </ul>
+  </div>
+</div>
+</body>
+</html>

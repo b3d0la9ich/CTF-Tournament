@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Вход</title>
+  <link rel="stylesheet" href="/static/assets/styles.css">
+</head>
+<body>
+<header><div class="container"><b>Вход</b></div></header>
+<div class="container">
+  <div class="card">
+    <div class="row">
+      <div style="flex:1; min-width:240px;">
+        <label>Логин</label>
+        <input id="u" placeholder="username">
+      </div>
+      <div style="flex:1; min-width:240px;">
+        <label>Пароль</label>
+        <input id="p" type="password" placeholder="password">
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <button class="btn" id="loginBtn">Войти</button>
+      <button class="btn secondary" onclick="location.href='/'">На главную</button>
+    </div>
+    <p class="small" style="margin-top:12px;">
+      Еще нет аккаунта? <a href="/register">Зарегистрироваться</a>
+    </p>
+    <p id="err" class="small" style="color:#ff9a9a;"></p>
+  </div>
+
+<script type="module">
+import { api } from "/static/assets/api.js";
+document.getElementById("loginBtn").onclick = async () => {
+  document.getElementById("err").textContent = "";
+  try {
+    await api("/auth/login", "POST", {
+      username: document.getElementById("u").value.trim(),
+      password: document.getElementById("p").value
+    });
+    location.href = "/dashboard";
+  } catch(e){ document.getElementById("err").textContent = e.message; }
+};
+</script>
+</body>
+</html>

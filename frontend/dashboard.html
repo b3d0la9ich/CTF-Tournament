@@ -1,0 +1,727 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Личный кабинет</title>
+  <link rel="stylesheet" href="/static/assets/styles.css">
+</head>
+
+<body class="page">
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="profile-line">
+      <div class="profile-title">Личный кабинет</div>
+      <span id="who" class="badge"></span>
+    </div>
+    <div class="row">
+      <button class="btn secondary" id="ratingBtn">Рейтинг</button>
+      <button class="btn secondary" id="logoutBtn">Выход</button>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <!-- LEFT -->
+  <aside class="sidebar">
+    <div class="card">
+      <div class="section-title">
+        <h4>Навигация</h4>
+      </div>
+      <div class="nav">
+        <button class="btn secondary" id="navMatches">Матчи</button>
+        <button class="btn secondary" id="navTeams">Группы</button>
+        <button class="btn secondary" id="navRating">Рейтинг</button>
+        <button class="btn secondary hidden" id="navAdmin">Админ-панель</button>
+      </div>
+      <hr class="sep"/>
+      <div class="small muted">
+        Логика: пользователь подаёт заявку → админ approve → участник попадает в match_participants →
+        админ выбирает победителя вручную и начисляет очки (team — всем членам команды).
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">
+        <h4>Статус</h4>
+      </div>
+      <div class="kv">
+        <b>Роль</b><div id="roleLine">—</div>
+        <b>Очки</b><div id="pointsLine">—</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- RIGHT -->
+  <main class="stack">
+    <section id="ratingCard" class="card hidden"></section>
+
+    <section id="userArea" class="stack hidden">
+      <!-- MATCHES -->
+      <div id="matchesSection" class="card">
+        <div class="section-title">
+          <h3>Матчи</h3>
+          <div class="small muted">Подача заявок и просмотр</div>
+        </div>
+
+        <div class="tabs">
+          <button class="btn secondary" id="tabOpen">open</button>
+          <button class="btn secondary" id="tabClosed">closed</button>
+          <button class="btn secondary" id="tabFinished">finished</button>
+          <button class="btn secondary" id="loadHistory">История участия</button>
+        </div>
+
+        <div id="userOut" class="small">Загрузка...</div>
+      </div>
+
+      <!-- TEAMS -->
+      <div id="teamsSection" class="card hidden">
+        <div class="section-title">
+          <h3>Группы (team)</h3>
+          <div class="small muted">Создание / вступление / выход</div>
+        </div>
+
+        <div class="card tight">
+          <div class="row">
+            <input id="teamName" placeholder="Название группы">
+            <select id="teamOpen" style="max-width:240px;">
+              <option value="true">Открытая</option>
+              <option value="false">Закрытая</option>
+            </select>
+            <button class="btn" id="createTeam">Создать группу</button>
+          </div>
+
+          <div class="row" style="margin-top:10px;">
+            <button class="btn secondary" id="listTeams">Открытые группы</button>
+            <button class="btn secondary" id="listMyTeams">Мои группы</button>
+          </div>
+        </div>
+
+        <div id="teamsOut" class="small"></div>
+      </div>
+    </section>
+
+    <section id="adminArea" class="card hidden">
+      <div class="section-title">
+        <h3>Админ-панель</h3>
+        <div class="small muted">Матчи, заявки, пользователи, логи</div>
+      </div>
+
+      <div class="tabs">
+        <button class="btn secondary" id="adminUsers">Пользователи</button>
+        <button class="btn secondary" id="adminLogs">Логи</button>
+        <button class="btn secondary" id="adminApps">Заявки</button>
+      </div>
+
+      <div class="card tight">
+        <h4 style="margin:0 0 10px;">Матчи CTF</h4>
+        <div class="row">
+          <input id="mTitle" placeholder="Название матча">
+          <select id="mMode" style="max-width:180px;">
+            <option value="solo">Solo</option>
+            <option value="team">Team</option>
+          </select>
+          <button class="btn" id="mCreate">Создать</button>
+        </div>
+
+        <div class="row" style="margin-top:10px;">
+          <select id="mFilter" style="max-width:220px;">
+            <option value="all">Все статусы</option>
+            <option value="open">open</option>
+            <option value="closed">closed</option>
+            <option value="finished">finished</option>
+          </select>
+          <button class="btn secondary" id="mListAll">Показать матчи</button>
+        </div>
+      </div>
+
+      <div class="small" id="matchesOut"></div>
+
+      <div class="card hidden" id="reportCard">
+        <div class="section-title">
+          <h4>Отчёт</h4>
+          <div class="row">
+            <button class="btn secondary" id="copyReport">Скопировать</button>
+            <button class="btn secondary" id="closeReport">Закрыть</button>
+          </div>
+        </div>
+        <pre id="reportText" style="white-space:pre-wrap;"></pre>
+      </div>
+
+      <div class="small" id="adminOut"></div>
+    </section>
+
+    <div id="err" class="small" style="color:#ff9a9a;"></div>
+  </main>
+</div>
+
+<script type="module">
+import { api } from "/static/assets/api.js";
+
+/* ---------- helpers ---------- */
+const errEl = document.getElementById("err");
+const who = document.getElementById("who");
+const ratingCard = document.getElementById("ratingCard");
+
+const userArea = document.getElementById("userArea");
+const adminArea = document.getElementById("adminArea");
+
+const matchesSection = document.getElementById("matchesSection");
+const teamsSection = document.getElementById("teamsSection");
+
+const navMatches = document.getElementById("navMatches");
+const navTeams = document.getElementById("navTeams");
+const navRating = document.getElementById("navRating");
+const navAdmin = document.getElementById("navAdmin");
+
+const roleLine = document.getElementById("roleLine");
+const pointsLine = document.getElementById("pointsLine");
+
+const reportCard = document.getElementById("reportCard");
+const reportText = document.getElementById("reportText");
+
+function err(m){ errEl.textContent = m || ""; }
+function show(el){ el.classList.remove("hidden"); }
+function hide(el){ el.classList.add("hidden"); }
+
+function setActive(btnId){
+  ["tabOpen","tabClosed","tabFinished","loadHistory"].forEach(id=>{
+    const b = document.getElementById(id);
+    if (!b) return;
+    b.classList.toggle("active", id === btnId);
+  });
+}
+
+function goMatches(){
+  show(userArea);
+  show(matchesSection);
+  hide(teamsSection);
+  hide(ratingCard);
+  hide(adminArea);
+}
+function goTeams(){
+  show(userArea);
+  hide(matchesSection);
+  show(teamsSection);
+  hide(ratingCard);
+  hide(adminArea);
+}
+function goRating(){
+  show(userArea);
+  hide(matchesSection);
+  hide(teamsSection);
+  hide(adminArea);
+  show(ratingCard);
+}
+function goAdmin(){
+  show(userArea);
+  hide(matchesSection);
+  hide(teamsSection);
+  hide(ratingCard);
+  show(adminArea);
+}
+
+/* ---------- auth/me ---------- */
+async function loadMe(){
+  err("");
+  try{
+    const me = await api("/me");
+    who.textContent = `${me.username} (${me.role}) • points=${me.points}`;
+    roleLine.textContent = me.role;
+    pointsLine.textContent = String(me.points);
+
+    show(userArea);
+
+    if (me.role === "admin") {
+      navAdmin.classList.remove("hidden");
+      hide(adminArea);
+    } else {
+      navAdmin.classList.add("hidden");
+      hide(adminArea);
+    }
+  }catch(e){
+    location.href="/login";
+  }
+}
+
+document.getElementById("logoutBtn").onclick = async () => {
+  await api("/auth/logout","POST");
+  location.href="/";
+};
+
+/* ---------- nav ---------- */
+navMatches.onclick = () => goMatches();
+navTeams.onclick = () => goTeams();
+navRating.onclick = () => document.getElementById("ratingBtn").click();
+navAdmin.onclick = () => goAdmin();
+
+/* ---------- rating ---------- */
+document.getElementById("ratingBtn").onclick = async () => {
+  goRating();
+  ratingCard.innerHTML = "Загрузка рейтинга...";
+  const data = await api("/rating");
+  const arr = Array.isArray(data) ? data : (Array.isArray(data?.users) ? data.users : []);
+  ratingCard.innerHTML = `<h3>Рейтинг</h3>` +
+    `<table><tr><th>#</th><th>Юзер</th><th>Роль</th><th>Очки</th></tr>`+
+    arr.map((u,i)=>`<tr><td>${i+1}</td><td>${u.username}</td><td>${u.role}</td><td>${u.points}</td></tr>`).join("")+
+    `</table>`;
+};
+
+/* ---------- USER: matches (FIXED) ---------- */
+async function renderMatchesByStatus(status) {
+  goMatches();
+  const out = document.getElementById("userOut");
+  out.innerHTML = "Загрузка...";
+
+  let matches = [];
+  let myApps = {};
+  let myTeams = [];
+
+  try {
+    const res = await api(`/matches?status=${encodeURIComponent(status)}`);
+    // поддержка форматов: [] | {matches: []} | null
+    matches = Array.isArray(res) ? res : (Array.isArray(res?.matches) ? res.matches : []);
+
+    const resApps = await api("/my/applications");
+    myApps = (resApps && typeof resApps === "object") ? resApps : {};
+
+    const resTeams = await api("/my/teams");
+    myTeams = Array.isArray(resTeams) ? resTeams : (Array.isArray(resTeams?.teams) ? resTeams.teams : []);
+  } catch (e) {
+    out.innerHTML = `<div class="small" style="color:#ff9a9a;">Ошибка загрузки: ${e.message}</div>`;
+    return;
+  }
+
+  if (!matches.length) {
+    out.innerHTML = `<div class="small muted">Матчей со статусом <b>${status}</b> нет</div>`;
+    return;
+  }
+
+  const teamOptionsHtml = (myTeams || [])
+    .map(t => `<option value="${t.id}">${t.name} (id=${t.id})</option>`)
+    .join("");
+
+  out.innerHTML =
+    `<h4 style="margin:0 0 10px;">Матчи (${status})</h4>` +
+    matches.map(m => {
+      const appSt = myApps[m.id] || "none";
+      const appLabel = appSt === "none" ? "не подавал" : appSt;
+      const alreadyApplied = appSt !== "none";
+
+      const teamPick = (m.mode === "team")
+        ? `<select data-team="${m.id}" style="min-width:240px;">
+             <option value="">Выбери свою группу</option>
+             ${teamOptionsHtml}
+           </select>`
+        : "";
+
+      return `
+        <div class="card">
+          <b>${m.title}</b>
+          <span class="badge">${m.mode}</span>
+          <span class="badge">${m.status}</span>
+          <span class="badge">заявка: ${appLabel}</span>
+
+          <div class="row" style="margin-top:10px;">
+            ${teamPick}
+            <button class="btn" data-apply="${m.id}" ${alreadyApplied ? "disabled" : ""}>
+              ${alreadyApplied ? "Заявка уже есть" : "Подать заявку"}
+            </button>
+          </div>
+
+          <div class="small" data-msg="${m.id}"></div>
+        </div>
+      `;
+    }).join("");
+
+  out.querySelectorAll("button[data-apply]").forEach(btn => {
+    btn.onclick = async () => {
+      const matchId = Number(btn.getAttribute("data-apply"));
+      const msg = out.querySelector(`div[data-msg="${matchId}"]`);
+      msg.textContent = "";
+
+      const m = matches.find(x => x.id === matchId);
+      if (!m) return;
+
+      let body = {};
+      if (m.mode === "team") {
+        const sel = out.querySelector(`select[data-team="${matchId}"]`);
+        const teamId = sel ? sel.value : "";
+        if (!teamId) {
+          msg.textContent = "Выбери свою группу для team-матча.";
+          return;
+        }
+        body.team_id = Number(teamId);
+      }
+
+      try {
+        await api(`/matches/${matchId}/apply`, "POST", body);
+        btn.textContent = "Заявка отправлена (pending)";
+        btn.disabled = true;
+      } catch (e) {
+        msg.textContent = "Ошибка: " + e.message;
+      }
+    };
+  });
+}
+
+document.getElementById("tabOpen").onclick = () => { setActive("tabOpen"); renderMatchesByStatus("open"); };
+document.getElementById("tabClosed").onclick = () => { setActive("tabClosed"); renderMatchesByStatus("closed"); };
+document.getElementById("tabFinished").onclick = () => { setActive("tabFinished"); renderMatchesByStatus("finished"); };
+
+document.getElementById("loadHistory").onclick = async () => {
+  setActive("loadHistory");
+  goMatches();
+  const out = document.getElementById("userOut");
+  out.innerHTML = "Загрузка...";
+  try {
+    const hist = await api("/history");
+    const arr = Array.isArray(hist) ? hist : (Array.isArray(hist?.history) ? hist.history : []);
+    out.innerHTML =
+      "<h4 style='margin:0 0 10px;'>История участия</h4>" +
+      (arr.length ? arr.map(m => `
+        <div class="card"><b>${m.title}</b> <span class="badge">${m.mode}</span> <span class="badge">${m.status}</span></div>
+      `).join("") : "<div class='small muted'>Пока пусто</div>");
+  } catch (e) {
+    out.innerHTML = `<div class="small" style="color:#ff9a9a;">Ошибка загрузки: ${e.message}</div>`;
+  }
+};
+
+/* ---------- USER: teams ---------- */
+document.getElementById("createTeam").onclick = async () => {
+  goTeams();
+  const name = document.getElementById("teamName").value.trim();
+  const is_open = document.getElementById("teamOpen").value === "true";
+  const el = document.getElementById("teamsOut");
+  el.innerHTML = "Загрузка...";
+  try {
+    const res = await api("/teams","POST",{name,is_open});
+    el.innerHTML = `Создано: team_id=${res.team_id}`;
+  } catch (e) {
+    el.innerHTML = `<div class="small" style="color:#ff9a9a;">Ошибка: ${e.message}</div>`;
+  }
+};
+
+document.getElementById("listTeams").onclick = async () => {
+  goTeams();
+  const el = document.getElementById("teamsOut");
+  el.innerHTML = "Загрузка...";
+  try {
+    const res = await api("/teams/open");
+    const teams = Array.isArray(res) ? res : (Array.isArray(res?.teams) ? res.teams : []);
+    el.innerHTML = "<h4 style='margin:0 0 10px;'>Открытые группы</h4>" +
+      (teams.length ? teams.map(t=>`
+        <div class="card">
+          <b>${t.name}</b> <span class="badge">id=${t.id}</span>
+          <div class="row" style="margin-top:8px;">
+            <button class="btn secondary" data-join="${t.id}">Вступить</button>
+            <button class="btn secondary" data-leave="${t.id}">Выйти</button>
+          </div>
+        </div>
+      `).join("") : "<div class='small muted'>Открытых групп нет</div>");
+
+    el.querySelectorAll("button[data-join]").forEach(b=>b.onclick=async()=>{
+      await api(`/teams/${b.getAttribute("data-join")}/join`,"POST");
+      b.textContent="Вступили";
+    });
+    el.querySelectorAll("button[data-leave]").forEach(b=>b.onclick=async()=>{
+      await api(`/teams/${b.getAttribute("data-leave")}/leave`,"POST");
+      b.textContent="Вышли";
+    });
+  } catch (e) {
+    el.innerHTML = `<div class="small" style="color:#ff9a9a;">Ошибка: ${e.message}</div>`;
+  }
+};
+
+document.getElementById("listMyTeams").onclick = async () => {
+  goTeams();
+  const el = document.getElementById("teamsOut");
+  el.innerHTML = "Загрузка...";
+  try {
+    const res = await api("/my/teams");
+    const teams = Array.isArray(res) ? res : (Array.isArray(res?.teams) ? res.teams : []);
+    el.innerHTML = "<h4 style='margin:0 0 10px;'>Мои группы</h4>" +
+      (teams.length ? teams.map(t=>`
+        <div class="card">
+          <b>${t.name}</b> <span class="badge">id=${t.id}</span>
+          <span class="badge">${t.is_open ? "open" : "closed"}</span>
+        </div>
+      `).join("") : "<div class='small muted'>Вы не состоите ни в одной группе</div>");
+  } catch (e) {
+    el.innerHTML = `<div class="small" style="color:#ff9a9a;">Ошибка: ${e.message}</div>`;
+  }
+};
+
+/* ---------- ADMIN ---------- */
+document.getElementById("mCreate").onclick = async () => {
+  goAdmin();
+  const title = document.getElementById("mTitle").value.trim();
+  const mode = document.getElementById("mMode").value;
+  const out = document.getElementById("adminOut");
+  out.textContent = "Загрузка...";
+  try {
+    await api("/admin/matches","POST",{title,mode});
+    out.textContent = "Матч создан.";
+  } catch (e) {
+    out.textContent = "Ошибка: " + e.message;
+  }
+};
+
+document.getElementById("adminUsers").onclick = async () => {
+  goAdmin();
+  const out = document.getElementById("adminOut");
+  out.innerHTML = "Загрузка...";
+  try {
+    const res = await api("/admin/users");
+    const users = Array.isArray(res) ? res : (Array.isArray(res?.users) ? res.users : []);
+    out.innerHTML =
+      "<h4 style='margin:0 0 10px;'>Пользователи</h4>" +
+      `<table><tr><th>ID</th><th>Username</th><th>Role</th><th>Points</th><th>Actions</th></tr>` +
+      users.map(u=>`
+        <tr>
+          <td>${u.id}</td><td>${u.username}</td><td>${u.role}</td><td>${u.points}</td>
+          <td>
+            <button class="btn secondary" data-del="${u.id}">Удалить</button>
+            <button class="btn secondary" data-pts="${u.id}">Изм. очки</button>
+          </td>
+        </tr>
+      `).join("") + `</table>`;
+
+    document.querySelectorAll("button[data-del]").forEach(b=>b.onclick=async()=>{
+      await api(`/admin/users/${b.getAttribute("data-del")}`,"DELETE");
+      b.textContent="OK";
+    });
+    document.querySelectorAll("button[data-pts]").forEach(b=>b.onclick=async()=>{
+      const id = b.getAttribute("data-pts");
+      const p = Number(prompt("Новые очки:","0"));
+      if (Number.isFinite(p)) await api(`/admin/users/${id}/points`,"POST",{points:p});
+      b.textContent="OK";
+    });
+  } catch (e) {
+    out.innerHTML = `<div class="small" style="color:#ff9a9a;">Ошибка: ${e.message}</div>`;
+  }
+};
+
+document.getElementById("adminLogs").onclick = async () => {
+  goAdmin();
+  const out = document.getElementById("adminOut");
+  out.innerHTML = "Загрузка...";
+  try {
+    const res = await api("/admin/logs");
+    const logs = Array.isArray(res) ? res : (Array.isArray(res?.logs) ? res.logs : []);
+    out.innerHTML =
+      "<h4 style='margin:0 0 10px;'>Логи</h4>" +
+      `<table><tr><th>ID</th><th>Time</th><th>Actor</th><th>Action</th><th>Details</th></tr>` +
+      logs.map(l=>`<tr><td>${l.id}</td><td>${l.created_at}</td><td>${l.actor}</td><td>${l.action}</td><td>${l.details}</td></tr>`).join("") +
+      `</table>`;
+  } catch (e) {
+    out.innerHTML = `<div class="small" style="color:#ff9a9a;">Ошибка: ${e.message}</div>`;
+  }
+};
+
+document.getElementById("adminApps").onclick = async () => {
+  goAdmin();
+  const out = document.getElementById("adminOut");
+  out.innerHTML = "Загрузка...";
+  try {
+    const res = await api("/admin/applications");
+    const apps = Array.isArray(res) ? res : (Array.isArray(res?.applications) ? res.applications : []);
+    out.innerHTML =
+      "<h4 style='margin:0 0 10px;'>Заявки</h4>" +
+      `<table><tr><th>ID</th><th>match_id</th><th>user_id</th><th>team_id</th><th>status</th><th>Actions</th></tr>` +
+      apps.map(a=>`
+        <tr>
+          <td>${a.id}</td><td>${a.match_id}</td><td>${a.user_id}</td>
+          <td>${a.team_id ?? ""}</td><td>${a.status}</td>
+          <td>
+            <button class="btn secondary" data-ap="${a.id}">Approve</button>
+            <button class="btn secondary" data-rj="${a.id}">Reject</button>
+          </td>
+        </tr>
+      `).join("") + `</table>`;
+
+    document.querySelectorAll("button[data-ap]").forEach(b=>b.onclick=async()=>{
+      await api(`/admin/applications/${b.getAttribute("data-ap")}/approve`,"POST");
+      b.textContent="OK";
+    });
+    document.querySelectorAll("button[data-rj]").forEach(b=>b.onclick=async()=>{
+      await api(`/admin/applications/${b.getAttribute("data-rj")}/reject`,"POST");
+      b.textContent="OK";
+    });
+  } catch (e) {
+    out.innerHTML = `<div class="small" style="color:#ff9a9a;">Ошибка: ${e.message}</div>`;
+  }
+};
+
+// report controls
+document.getElementById("closeReport").onclick = () => {
+  reportCard.classList.add("hidden");
+  reportText.textContent = "";
+};
+document.getElementById("copyReport").onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(reportText.textContent);
+    alert("Скопировано!");
+  } catch {
+    alert("Не удалось скопировать (браузер запретил).");
+  }
+};
+
+document.getElementById("mListAll").onclick = async () => {
+  goAdmin();
+  const status = document.getElementById("mFilter").value;
+  const el = document.getElementById("matchesOut");
+  el.innerHTML = "Загрузка...";
+  try {
+    const res = await api(`/admin/matches?status=${encodeURIComponent(status)}`);
+    const matches = Array.isArray(res) ? res : (Array.isArray(res?.matches) ? res.matches : []);
+
+    el.innerHTML = "<h4 style='margin:0 0 10px;'>Матчи</h4>" +
+      (matches.length ? matches.map(m => `
+        <div class="card">
+          <b>${m.title}</b> <span class="badge">id=${m.id}</span>
+          <span class="badge">${m.mode}</span>
+          <span class="badge">${m.status}</span>
+
+          <div class="row" style="margin-top:10px;">
+            <button class="btn secondary" data-part="${m.id}">Участники</button>
+
+            <select data-winner-user="${m.id}" style="min-width:260px; display:none;">
+              <option value="">Победитель (user)</option>
+            </select>
+
+            <select data-winner-team="${m.id}" style="min-width:260px; display:none;">
+              <option value="">Победитель (team)</option>
+            </select>
+
+            <input placeholder="bonus_points" value="0" data-bp="${m.id}" style="max-width:160px;">
+            <button class="btn" data-win="${m.id}">Установить победителя</button>
+            <button class="btn secondary" data-close="${m.id}">Закрыть матч</button>
+            <button class="btn secondary" data-report="${m.id}">Отчёт</button>
+          </div>
+
+          <div class="small" data-msg="${m.id}"></div>
+        </div>
+      `).join("") : "<div class='small muted'>Матчей нет</div>");
+
+    // participants
+    el.querySelectorAll("button[data-part]").forEach(btn => {
+      btn.onclick = async () => {
+        const id = btn.getAttribute("data-part");
+        const msg = el.querySelector(`div[data-msg="${id}"]`);
+        const selU = el.querySelector(`select[data-winner-user="${id}"]`);
+        const selT = el.querySelector(`select[data-winner-team="${id}"]`);
+
+        msg.textContent = "Загружаю участников...";
+        try {
+          const data = await api(`/admin/matches/${id}/participants`);
+          msg.textContent = "";
+
+          selU.innerHTML = `<option value="">Победитель (user)</option>`;
+          selT.innerHTML = `<option value="">Победитель (team)</option>`;
+
+          if (data.match.mode === "solo") {
+            selT.style.display = "none";
+            selU.style.display = "";
+
+            (data.users || []).forEach(u => {
+              const opt = document.createElement("option");
+              opt.value = String(u.id);
+              opt.textContent = `${u.username} (id=${u.id}, points=${u.points})`;
+              selU.appendChild(opt);
+            });
+
+            if ((data.users || []).length === 0) msg.textContent = "В матче пока нет участников.";
+          } else {
+            selU.style.display = "none";
+            selT.style.display = "";
+
+            (data.teams || []).forEach(t => {
+              const opt = document.createElement("option");
+              opt.value = String(t.id);
+
+              const members = (t.members || []).map(x => x.username).join(", ");
+              const count = (t.members || []).length;
+              opt.textContent = `${t.name} (id=${t.id}) — участников: ${count} [${members}]`;
+              selT.appendChild(opt);
+            });
+
+            if ((data.teams || []).length === 0) msg.textContent = "В матче пока нет команд-участников.";
+          }
+        } catch (e) {
+          msg.textContent = "Ошибка: " + e.message;
+        }
+      };
+    });
+
+    // set winner
+    el.querySelectorAll("button[data-win]").forEach(btn => {
+      btn.onclick = async () => {
+        const id = btn.getAttribute("data-win");
+        const msg = el.querySelector(`div[data-msg="${id}"]`);
+        const selU = el.querySelector(`select[data-winner-user="${id}"]`);
+        const selT = el.querySelector(`select[data-winner-team="${id}"]`);
+        const bp = Number(el.querySelector(`input[data-bp="${id}"]`).value.trim() || "0");
+
+        const winnerUserId = (selU.style.display !== "none" && selU.value) ? Number(selU.value) : null;
+        const winnerTeamId = (selT.style.display !== "none" && selT.value) ? Number(selT.value) : null;
+
+        try {
+          await api(`/admin/matches/${id}/winner`, "POST", {
+            winner_user_id: winnerUserId,
+            winner_team_id: winnerTeamId,
+            bonus_points: Number.isFinite(bp) ? bp : 0
+          });
+          msg.textContent = "Победитель установлен. Очки начислены (team — всем участникам).";
+          btn.disabled = true;
+        } catch (e) {
+          msg.textContent = "Ошибка: " + e.message + " (сначала нажми 'Участники' и выбери победителя)";
+        }
+      };
+    });
+
+    // close match
+    el.querySelectorAll("button[data-close]").forEach(btn => {
+      btn.onclick = async () => {
+        const id = btn.getAttribute("data-close");
+        const msg = el.querySelector(`div[data-msg="${id}"]`);
+        try {
+          await api(`/admin/matches/${id}/close`, "POST", {});
+          msg.textContent = "Матч закрыт (status=closed).";
+          btn.disabled = true;
+        } catch(e) {
+          msg.textContent = "Ошибка: " + e.message;
+        }
+      };
+    });
+
+    // report
+    el.querySelectorAll("button[data-report]").forEach(btn => {
+      btn.onclick = async () => {
+        const id = btn.getAttribute("data-report");
+        const msg = el.querySelector(`div[data-msg="${id}"]`);
+        msg.textContent = "Генерирую отчёт...";
+        try {
+          const r = await api(`/admin/matches/${id}/report`);
+          reportText.textContent = r.report || "";
+          reportCard.classList.remove("hidden");
+          msg.textContent = "";
+          reportCard.scrollIntoView({ behavior: "smooth", block: "start" });
+        } catch (e) {
+          msg.textContent = "Ошибка: " + e.message;
+        }
+      };
+    });
+  } catch (e) {
+    el.innerHTML = `<div class="small" style="color:#ff9a9a;">Ошибка: ${e.message}</div>`;
+  }
+};
+
+/* ---------- init ---------- */
+await loadMe();
+goMatches();
+setActive("tabOpen");
+await renderMatchesByStatus("open");
+</script>
+
+</body>
+</html>

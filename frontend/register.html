@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Регистрация</title>
+  <link rel="stylesheet" href="/static/assets/styles.css">
+</head>
+<body>
+<header><div class="container"><b>Регистрация</b></div></header>
+<div class="container">
+  <div class="card">
+    <div class="row">
+      <div style="flex:1; min-width:240px;">
+        <label>Логин</label>
+        <input id="u" placeholder="username">
+      </div>
+    </div>
+    <div class="row">
+      <div style="flex:1; min-width:240px;">
+        <label>Пароль</label>
+        <input id="p1" type="password" placeholder="password">
+      </div>
+      <div style="flex:1; min-width:240px;">
+        <label>Повтор пароля</label>
+        <input id="p2" type="password" placeholder="repeat password">
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <button class="btn" id="regBtn">Зарегистрироваться</button>
+      <button class="btn secondary" onclick="location.href='/'">На главную</button>
+    </div>
+    <p class="small" style="margin-top:12px;">
+      Уже есть аккаунт? <a href="/login">Войти</a>
+    </p>
+    <p id="err" class="small" style="color:#ff9a9a;"></p>
+  </div>
+
+<script type="module">
+import { api } from "/static/assets/api.js";
+document.getElementById("regBtn").onclick = async () => {
+  document.getElementById("err").textContent = "";
+  try {
+    await api("/auth/register", "POST", {
+      username: document.getElementById("u").value.trim(),
+      password: document.getElementById("p1").value,
+      password2: document.getElementById("p2").value
+    });
+    location.href = "/login";
+  } catch(e){ document.getElementById("err").textContent = e.message; }
+};
+</script>
+</body>
+</html>
