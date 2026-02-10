@@ -1,52 +1,168 @@
 <!doctype html>
-<html>
+<html lang="ru">
 <head>
-  <meta charset="utf-8"/>
-  <title>Регистрация</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Регистрация • CTF Tournament</title>
   <link rel="stylesheet" href="/static/assets/styles.css">
 </head>
-<body>
-<header><div class="container"><b>Регистрация</b></div></header>
-<div class="container">
-  <div class="card">
-    <div class="row">
-      <div style="flex:1; min-width:240px;">
-        <label>Логин</label>
-        <input id="u" placeholder="username">
+
+<body class="auth landing">
+<header class="landing-header">
+  <div class="landing-shell">
+    <div class="brand">
+      <div class="brand-mark">CTF</div>
+      <div class="brand-text">
+        <div class="brand-title">CTF Tournament</div>
+        <div class="brand-sub">Создание аккаунта</div>
       </div>
     </div>
-    <div class="row">
-      <div style="flex:1; min-width:240px;">
-        <label>Пароль</label>
-        <input id="p1" type="password" placeholder="password">
-      </div>
-      <div style="flex:1; min-width:240px;">
-        <label>Повтор пароля</label>
-        <input id="p2" type="password" placeholder="repeat password">
-      </div>
+
+    <nav class="landing-nav">
+      <a class="nav-link" href="/">На главную</a>
+      <a class="nav-link" href="/login">Вход</a>
+    </nav>
+
+    <div class="landing-actions">
+      <a class="btn secondary" href="/">Главная</a>
+      <a class="btn" href="/login">Вход</a>
     </div>
-    <div class="row" style="margin-top:12px;">
-      <button class="btn" id="regBtn">Зарегистрироваться</button>
-      <button class="btn secondary" onclick="location.href='/'">На главную</button>
-    </div>
-    <p class="small" style="margin-top:12px;">
-      Уже есть аккаунт? <a href="/login">Войти</a>
-    </p>
-    <p id="err" class="small" style="color:#ff9a9a;"></p>
   </div>
+</header>
+
+<main class="landing-main">
+  <section class="auth-wrap">
+    <div class="landing-shell auth-grid">
+
+      <!-- LEFT -->
+      <div class="auth-left glass">
+        <div class="chip"><span class="dot"></span> Регистрация</div>
+        <h1 class="auth-title">Добро пожаловать</h1>
+        <p class="muted auth-desc">
+          Создайте аккаунт, чтобы участвовать в CTF-матчах, вступать в команды и зарабатывать очки рейтинга.
+        </p>
+
+        <div class="auth-bullets">
+          <div class="bullet"><span>🧾</span> Подача заявок на матчи</div>
+          <div class="bullet"><span>👥</span> Team-матчи и группы</div>
+          <div class="bullet"><span>🏆</span> Очки и рейтинг</div>
+        </div>
+
+        <div class="small muted" style="margin-top:14px;">
+          Уже есть аккаунт?
+          <a class="link" href="/login">Войти</a>
+        </div>
+      </div>
+
+      <!-- RIGHT -->
+      <div class="auth-right glass">
+        <div class="auth-card-head">
+          <div>
+            <div class="auth-card-title">Регистрация</div>
+            <div class="small muted">Придумайте логин и пароль</div>
+          </div>
+          <a class="btn secondary" href="/">← Назад</a>
+        </div>
+
+        <form id="regForm" class="auth-form">
+          <label class="field">
+            <span class="field-label">Логин</span>
+            <input id="username" placeholder="например: test@test.com" required />
+          </label>
+
+          <label class="field">
+            <span class="field-label">Пароль</span>
+            <div class="field-pass">
+              <input id="password" type="password" placeholder="••••••••" required />
+              <button type="button" class="icon-btn" id="togglePass1">👁</button>
+            </div>
+          </label>
+
+          <label class="field">
+            <span class="field-label">Повтор пароля</span>
+            <div class="field-pass">
+              <input id="password2" type="password" placeholder="••••••••" required />
+              <button type="button" class="icon-btn" id="togglePass2">👁</button>
+            </div>
+          </label>
+
+          <button class="btn auth-submit" type="submit">
+            Создать аккаунт
+          </button>
+
+          <div id="msg" class="small" style="margin-top:10px;"></div>
+
+          <div class="auth-divider"><span>или</span></div>
+
+          <a class="btn secondary auth-alt" href="/login">
+            У меня уже есть аккаунт
+          </a>
+        </form>
+      </div>
+
+    </div>
+  </section>
+</main>
+
+<div class="noise"></div>
 
 <script type="module">
 import { api } from "/static/assets/api.js";
-document.getElementById("regBtn").onclick = async () => {
-  document.getElementById("err").textContent = "";
+
+const form = document.getElementById("regForm");
+const msg = document.getElementById("msg");
+
+document.getElementById("togglePass1").onclick = () => {
+  const p = document.getElementById("password");
+  p.type = p.type === "password" ? "text" : "password";
+};
+document.getElementById("togglePass2").onclick = () => {
+  const p = document.getElementById("password2");
+  p.type = p.type === "password" ? "text" : "password";
+};
+
+form.onsubmit = async (e) => {
+  e.preventDefault();
+  msg.textContent = "";
+  msg.style.color = "rgba(255,255,255,.85)";
+
+  const username = document.getElementById("username").value.trim();
+  const password = document.getElementById("password").value;
+  const password2 = document.getElementById("password2").value;
+
+  if (!username || !password || !password2) {
+    msg.textContent = "Заполните все поля.";
+    msg.style.color = "#ff9a9a";
+    return;
+  }
+  if (password !== password2) {
+    msg.textContent = "Пароли не совпадают.";
+    msg.style.color = "#ff9a9a";
+    return;
+  }
+  if (password.length < 6) {
+    msg.textContent = "Пароль должен быть минимум 6 символов.";
+    msg.style.color = "#ff9a9a";
+    return;
+  }
+
+  msg.textContent = "Создаю аккаунт...";
+
   try {
     await api("/auth/register", "POST", {
-      username: document.getElementById("u").value.trim(),
-      password: document.getElementById("p1").value,
-      password2: document.getElementById("p2").value
+      username,
+      password,
+      password2
     });
-    location.href = "/login";
-  } catch(e){ document.getElementById("err").textContent = e.message; }
+
+    msg.textContent = "Готово! Перенаправляю на вход...";
+    msg.style.color = "rgba(110,240,210,.95)";
+    setTimeout(() => location.href = "/login", 800);
+
+  } catch (err) {
+    msg.textContent = "Ошибка регистрации: " + err.message;
+    msg.style.color = "#ff9a9a";
+  }
 };
 </script>
 </body>

@@ -1,8 +1,22 @@
-export async function api(path, method="GET", body=null) {
-  const opts = { method, headers: { "Content-Type": "application/json" } };
-  if (body) opts.body = JSON.stringify(body);
+export async function api(path, method = "GET", body) {
+  const opts = { method, headers: {} };
+
+  if (body !== undefined) {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+
   const res = await fetch("/api" + path, opts);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || "Request failed");
+
+  // пробуем распарсить JSON всегда
+  let data = null;
+  const text = await res.text();
+  try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+
+  if (!res.ok) {
+    const msg = (data && (data.error || data.message)) ? (data.error || data.message) : (text || ("HTTP " + res.status));
+    throw new Error(msg);
+  }
+
   return data;
 }

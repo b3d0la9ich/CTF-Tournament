@@ -2,7 +2,6 @@ package internal
 
 import (
 	"context"
-	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -24,12 +23,21 @@ func Me(db *pgxpool.Pool) gin.HandlerFunc {
 	}
 }
 
+func userHasAnyTeam(db *pgxpool.Pool, userID int) (bool, error) {
+	var ok bool
+	err := db.QueryRow(context.Background(),
+		"SELECT EXISTS(SELECT 1 FROM team_members WHERE user_id=$1)",
+		userID,
+	).Scan(&ok)
+	return ok, err
+}
+
 // ------------------- Rating -------------------
 
 func Rating(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		rows, err := db.Query(context.Background(),
-			"SELECT id, username, role, points FROM users ORDER BY points DESC, id ASC LIMIT 100",
+			"SELECT id, username, role, points FROM users WHERE role <> 'admin' ORDER BY points DESC, id ASC LIMIT 100",
 		)
 		if err != nil {
 			c.JSON(500, gin.H{"error": "db"})
@@ -199,6 +207,17 @@ func MyHistory(db *pgxpool.Pool) gin.HandlerFunc {
 func CreateTeam(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := uid(c)
+
+		has, err := userHasAnyTeam(db, userID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "db"})
+			return
+		}
+		if has {
+			c.JSON(400, gin.H{"error": "you must leave your current team first"})
+			return
+		}
+
 		var req struct {
 			Name   string `json:"name"`
 			IsOpen bool   `json:"is_open"`
@@ -207,8 +226,9 @@ func CreateTeam(db *pgxpool.Pool) gin.HandlerFunc {
 			c.JSON(400, gin.H{"error": "bad request"})
 			return
 		}
+
 		var teamID int
-		err := db.QueryRow(context.Background(),
+		err = db.QueryRow(context.Background(),
 			"INSERT INTO teams(name, owner_id, is_open) VALUES ($1,$2,$3) RETURNING id",
 			req.Name, userID, req.IsOpen,
 		).Scan(&teamID)
@@ -216,10 +236,12 @@ func CreateTeam(db *pgxpool.Pool) gin.HandlerFunc {
 			c.JSON(500, gin.H{"error": "db"})
 			return
 		}
+
 		_, _ = db.Exec(context.Background(),
 			"INSERT INTO team_members(team_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
 			teamID, userID,
 		)
+
 		logAction(db, &userID, "create_team", "team_id="+strconv.Itoa(teamID))
 		c.JSON(200, gin.H{"ok": true, "team_id": teamID})
 	}
@@ -227,22 +249,73 @@ func CreateTeam(db *pgxpool.Pool) gin.HandlerFunc {
 
 func ListOpenTeams(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		rows, err := db.Query(context.Background(),
-			"SELECT id, name, is_open FROM teams WHERE is_open=true ORDER BY id DESC",
-		)
+		ctx := context.Background()
+
+		type UserMini struct {
+			ID       int    `json:"id"`
+			Username string `json:"username"`
+		}
+		type TeamOut struct {
+			ID      int        `json:"id"`
+			Name    string     `json:"name"`
+			IsOpen  bool       `json:"is_open"`
+			Members []UserMini `json:"members"`
+		}
+
+		// 1) команды open
+		rows, err := db.Query(ctx, `
+			SELECT id, name, is_open
+			FROM teams
+			WHERE is_open=true
+			ORDER BY id DESC
+		`)
 		if err != nil {
 			c.JSON(500, gin.H{"error": "db"})
 			return
 		}
 		defer rows.Close()
 
-		var out []Team
+		teams := make([]TeamOut, 0, 64)
+		byID := make(map[int]int, 64)
+
 		for rows.Next() {
-			var t Team
+			var t TeamOut
 			_ = rows.Scan(&t.ID, &t.Name, &t.IsOpen)
-			out = append(out, t)
+			t.Members = []UserMini{}
+			byID[t.ID] = len(teams)
+			teams = append(teams, t)
 		}
-		c.JSON(200, out)
+
+		if len(teams) == 0 {
+			c.JSON(200, teams)
+			return
+		}
+
+		// 2) участники всех OPEN команд одним запросом
+		rowsM, err := db.Query(ctx, `
+			SELECT tm.team_id, u.id, u.username
+			FROM team_members tm
+			JOIN users u ON u.id = tm.user_id
+			JOIN teams t ON t.id = tm.team_id
+			WHERE t.is_open=true
+			ORDER BY tm.team_id, u.username
+		`)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "db"})
+			return
+		}
+		defer rowsM.Close()
+
+		for rowsM.Next() {
+			var tid int
+			var u UserMini
+			_ = rowsM.Scan(&tid, &u.ID, &u.Username)
+			if idx, ok := byID[tid]; ok {
+				teams[idx].Members = append(teams[idx].Members, u)
+			}
+		}
+
+		c.JSON(200, teams)
 	}
 }
 
@@ -251,6 +324,18 @@ func MyTeams(db *pgxpool.Pool) gin.HandlerFunc {
 		userID := uid(c)
 		ctx := context.Background()
 
+		type UserMini struct {
+			ID       int    `json:"id"`
+			Username string `json:"username"`
+		}
+		type TeamOut struct {
+			ID      int        `json:"id"`
+			Name    string     `json:"name"`
+			IsOpen  bool       `json:"is_open"`
+			Members []UserMini `json:"members"`
+		}
+
+		// 1) мои команды
 		rows, err := db.Query(ctx, `
 			SELECT t.id, t.name, t.is_open
 			FROM team_members tm
@@ -264,13 +349,49 @@ func MyTeams(db *pgxpool.Pool) gin.HandlerFunc {
 		}
 		defer rows.Close()
 
-		var out []Team
+		teams := make([]TeamOut, 0, 16)
+		byID := make(map[int]int, 16)
+
 		for rows.Next() {
-			var t Team
+			var t TeamOut
 			_ = rows.Scan(&t.ID, &t.Name, &t.IsOpen)
-			out = append(out, t)
+			t.Members = []UserMini{}
+			byID[t.ID] = len(teams)
+			teams = append(teams, t)
 		}
-		c.JSON(200, out)
+
+		if len(teams) == 0 {
+			c.JSON(200, teams)
+			return
+		}
+
+		// 2) состав только моих команд
+		rowsM, err := db.Query(ctx, `
+			SELECT tm.team_id, u.id, u.username
+			FROM team_members tm
+			JOIN users u ON u.id = tm.user_id
+			WHERE EXISTS (
+				SELECT 1 FROM team_members me
+				WHERE me.team_id = tm.team_id AND me.user_id = $1
+			)
+			ORDER BY tm.team_id, u.username
+		`, userID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "db"})
+			return
+		}
+		defer rowsM.Close()
+
+		for rowsM.Next() {
+			var tid int
+			var u UserMini
+			_ = rowsM.Scan(&tid, &u.ID, &u.Username)
+			if idx, ok := byID[tid]; ok {
+				teams[idx].Members = append(teams[idx].Members, u)
+			}
+		}
+
+		c.JSON(200, teams)
 	}
 }
 
@@ -279,6 +400,16 @@ func JoinTeam(db *pgxpool.Pool) gin.HandlerFunc {
 		userID := uid(c)
 		teamID, _ := strconv.Atoi(c.Param("id"))
 
+		has, err := userHasAnyTeam(db, userID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "db"})
+			return
+		}
+		if has {
+			c.JSON(400, gin.H{"error": "you must leave your current team first"})
+			return
+		}
+
 		var isOpen bool
 		if err := db.QueryRow(context.Background(),
 			"SELECT is_open FROM teams WHERE id=$1", teamID,
@@ -286,7 +417,8 @@ func JoinTeam(db *pgxpool.Pool) gin.HandlerFunc {
 			c.JSON(403, gin.H{"error": "team closed or not found"})
 			return
 		}
-		_, err := db.Exec(context.Background(),
+
+		_, err = db.Exec(context.Background(),
 			"INSERT INTO team_members(team_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
 			teamID, userID,
 		)
@@ -294,6 +426,7 @@ func JoinTeam(db *pgxpool.Pool) gin.HandlerFunc {
 			c.JSON(500, gin.H{"error": "db"})
 			return
 		}
+
 		logAction(db, &userID, "join_team", "team_id="+strconv.Itoa(teamID))
 		c.JSON(200, gin.H{"ok": true})
 	}
@@ -544,168 +677,165 @@ func AdminCloseMatch(db *pgxpool.Pool) gin.HandlerFunc {
 	}
 }
 
-// ------------------- Admin: applications approve/reject -------------------
+/* ===================== ADMIN: APPLICATIONS ===================== */
 
 func AdminListApplications(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		rows, err := db.Query(context.Background(),
-			"SELECT id, match_id, user_id, team_id, status FROM applications ORDER BY id DESC LIMIT 200",
-		)
+		rows, err := db.Query(context.Background(), `
+			SELECT
+				a.id,
+				m.title,
+				u.username,
+				COALESCE(t.name,''),
+				a.status
+			FROM applications a
+			JOIN matches m ON m.id = a.match_id
+			JOIN users u ON u.id = a.user_id
+			LEFT JOIN teams t ON t.id = a.team_id
+			ORDER BY a.id DESC
+		`)
 		if err != nil {
 			c.JSON(500, gin.H{"error": "db"})
 			return
 		}
 		defer rows.Close()
 
-		var out []Application
-		for rows.Next() {
-			var a Application
-			_ = rows.Scan(&a.ID, &a.MatchID, &a.UserID, &a.TeamID, &a.Status)
-			out = append(out, a)
+		type outRow struct {
+			ID        int64  `json:"id"`
+			Match     string `json:"match"`
+			User      string `json:"user"`
+			Team      string `json:"team"`
+			Status    string `json:"status"`
 		}
+
+		var out []outRow
+		for rows.Next() {
+			var r outRow
+			_ = rows.Scan(&r.ID, &r.Match, &r.User, &r.Team, &r.Status)
+			out = append(out, r)
+		}
+
 		c.JSON(200, out)
 	}
 }
 
 func AdminApproveApplication(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		actor := uid(c)
 		appID, _ := strconv.Atoi(c.Param("id"))
 		ctx := context.Background()
 
-		var a Application
+		var matchID, userID int
+		var teamID *int
+		var status string
+
 		err := db.QueryRow(ctx,
-			"SELECT id, match_id, user_id, team_id, status FROM applications WHERE id=$1",
+			"SELECT match_id,user_id,team_id,status FROM applications WHERE id=$1",
 			appID,
-		).Scan(&a.ID, &a.MatchID, &a.UserID, &a.TeamID, &a.Status)
+		).Scan(&matchID, &userID, &teamID, &status)
+
 		if err != nil {
 			c.JSON(404, gin.H{"error": "not found"})
 			return
 		}
 
-		_, err = db.Exec(ctx, "UPDATE applications SET status='approved' WHERE id=$1", appID)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+		if status != "pending" {
+			c.JSON(400, gin.H{"error": "application already processed"})
 			return
 		}
 
-		_, _ = db.Exec(ctx,
-			"INSERT INTO match_participants(match_id, user_id, team_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
-			a.MatchID, a.UserID, a.TeamID,
-		)
+		tx, _ := db.Begin(ctx)
+		defer tx.Rollback(ctx)
 
-		logAction(db, &actor, "admin_approve_application", "app_id="+strconv.Itoa(appID))
+		_, _ = tx.Exec(ctx,
+			"UPDATE applications SET status='approved' WHERE id=$1", appID)
+
+		_, _ = tx.Exec(ctx,
+			"INSERT INTO match_participants(match_id,user_id,team_id) VALUES ($1,$2,$3)",
+			matchID, userID, teamID)
+
+		_ = tx.Commit(ctx)
 		c.JSON(200, gin.H{"ok": true})
 	}
 }
 
 func AdminRejectApplication(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		actor := uid(c)
 		appID, _ := strconv.Atoi(c.Param("id"))
-		_, err := db.Exec(context.Background(),
-			"UPDATE applications SET status='rejected' WHERE id=$1",
+		ctx := context.Background()
+
+		var matchID, userID int
+		var teamID *int
+		var status string
+
+		err := db.QueryRow(ctx,
+			"SELECT match_id,user_id,team_id,status FROM applications WHERE id=$1",
 			appID,
-		)
+		).Scan(&matchID, &userID, &teamID, &status)
+
 		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			c.JSON(404, gin.H{"error": "not found"})
 			return
 		}
-		logAction(db, &actor, "admin_reject_application", "app_id="+strconv.Itoa(appID))
+
+		if status != "pending" {
+			c.JSON(400, gin.H{"error": "application already processed"})
+			return
+		}
+
+		tx, _ := db.Begin(ctx)
+		defer tx.Rollback(ctx)
+
+		_, _ = tx.Exec(ctx,
+			"UPDATE applications SET status='rejected' WHERE id=$1", appID)
+
+		if teamID != nil {
+			_, _ = tx.Exec(ctx,
+				"DELETE FROM match_participants WHERE match_id=$1 AND user_id=$2 AND team_id=$3",
+				matchID, userID, *teamID)
+		} else {
+			_, _ = tx.Exec(ctx,
+				"DELETE FROM match_participants WHERE match_id=$1 AND user_id=$2",
+				matchID, userID)
+		}
+
+		_ = tx.Commit(ctx)
 		c.JSON(200, gin.H{"ok": true})
 	}
 }
 
-// ------------------- Admin: participants for dropdown -------------------
+/* ===================== ADMIN: PARTICIPANTS ===================== */
 
 func AdminMatchParticipants(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		matchID, _ := strconv.Atoi(c.Param("id"))
-		ctx := context.Background()
 
-		var m Match
-		err := db.QueryRow(ctx,
-			"SELECT id, title, mode, status FROM matches WHERE id=$1",
-			matchID,
-		).Scan(&m.ID, &m.Title, &m.Mode, &m.Status)
+		rows, err := db.Query(context.Background(), `
+			SELECT u.username,u.points
+			FROM match_participants mp
+			JOIN users u ON u.id=mp.user_id
+			WHERE mp.match_id=$1
+			ORDER BY u.username
+		`, matchID)
+
 		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "match not found"})
+			c.JSON(500, gin.H{"error": "db"})
 			return
 		}
+		defer rows.Close()
 
-		type UserMini struct {
-			ID       int    `json:"id"`
+		type U struct {
 			Username string `json:"username"`
 			Points   int    `json:"points"`
 		}
 
-		rowsU, err := db.Query(ctx, `
-			SELECT DISTINCT u.id, u.username, u.points
-			FROM match_participants mp
-			JOIN users u ON u.id = mp.user_id
-			WHERE mp.match_id = $1
-			ORDER BY u.username ASC
-		`, matchID)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
-			return
-		}
-		defer rowsU.Close()
-
-		var users []UserMini
-		for rowsU.Next() {
-			var u UserMini
-			_ = rowsU.Scan(&u.ID, &u.Username, &u.Points)
+		var users []U
+		for rows.Next() {
+			var u U
+			_ = rows.Scan(&u.Username, &u.Points)
 			users = append(users, u)
 		}
 
-		type TeamMini struct {
-			ID      int        `json:"id"`
-			Name    string     `json:"name"`
-			Members []UserMini `json:"members"`
-		}
-
-		rowsT, err := db.Query(ctx, `
-			SELECT DISTINCT t.id, t.name, u.id, u.username, u.points
-			FROM match_participants mp
-			JOIN teams t ON t.id = mp.team_id
-			JOIN users u ON u.id = mp.user_id
-			WHERE mp.match_id = $1 AND mp.team_id IS NOT NULL
-			ORDER BY t.name ASC, u.username ASC
-		`, matchID)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
-			return
-		}
-		defer rowsT.Close()
-
-		teamMap := map[int]*TeamMini{}
-		order := []int{}
-		for rowsT.Next() {
-			var tid int
-			var tname string
-			var u UserMini
-			_ = rowsT.Scan(&tid, &tname, &u.ID, &u.Username, &u.Points)
-
-			t, ok := teamMap[tid]
-			if !ok {
-				t = &TeamMini{ID: tid, Name: tname}
-				teamMap[tid] = t
-				order = append(order, tid)
-			}
-			t.Members = append(t.Members, u)
-		}
-
-		var teams []TeamMini
-		for _, tid := range order {
-			teams = append(teams, *teamMap[tid])
-		}
-
-		c.JSON(200, gin.H{
-			"match": m,
-			"users": users,
-			"teams": teams,
-		})
+		c.JSON(200, gin.H{"users": users})
 	}
 }
 
@@ -726,7 +856,6 @@ func AdminSetWinner(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		// ровно один победитель
 		if (req.WinnerUserID == nil && req.WinnerTeamID == nil) ||
 			(req.WinnerUserID != nil && req.WinnerTeamID != nil) {
 			c.JSON(400, gin.H{"error": "choose exactly one winner: winner_user_id OR winner_team_id"})
@@ -755,7 +884,6 @@ func AdminSetWinner(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		// победитель должен быть участником
 		if req.WinnerUserID != nil {
 			var ok bool
 			_ = tx.QueryRow(ctx,
@@ -794,7 +922,6 @@ func AdminSetWinner(db *pgxpool.Pool) gin.HandlerFunc {
 					req.BonusPoints, *req.WinnerUserID,
 				)
 			} else {
-				// всем членам команды
 				_, err = tx.Exec(ctx,
 					`UPDATE users u
 					 SET points = points + $1
@@ -839,7 +966,6 @@ func AdminMatchReport(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		// заявки
 		type appRow struct {
 			id       int
 			username string
@@ -867,7 +993,6 @@ func AdminMatchReport(db *pgxpool.Pool) gin.HandlerFunc {
 			apps = append(apps, r)
 		}
 
-		// участники (факт)
 		type urow struct {
 			id       int
 			username string
@@ -892,7 +1017,6 @@ func AdminMatchReport(db *pgxpool.Pool) gin.HandlerFunc {
 			users = append(users, r)
 		}
 
-		// команды (если team)
 		type trow struct {
 			id      int
 			name    string
@@ -928,7 +1052,6 @@ func AdminMatchReport(db *pgxpool.Pool) gin.HandlerFunc {
 			t.members = append(t.members, ur)
 		}
 
-		// winner string
 		winnerStr := "не определён"
 		if winnerUserID != nil {
 			var un string

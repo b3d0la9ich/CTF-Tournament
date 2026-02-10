@@ -1,45 +1,120 @@
 <!doctype html>
-<html>
+<html lang="ru">
 <head>
-  <meta charset="utf-8"/>
-  <title>Вход</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Вход • CTF Tournament</title>
   <link rel="stylesheet" href="/static/assets/styles.css">
 </head>
-<body>
-<header><div class="container"><b>Вход</b></div></header>
-<div class="container">
-  <div class="card">
-    <div class="row">
-      <div style="flex:1; min-width:240px;">
-        <label>Логин</label>
-        <input id="u" placeholder="username">
+
+<body class="auth landing">
+  <header class="landing-header">
+    <div class="landing-shell">
+      <div class="brand">
+        <div class="brand-mark">CTF</div>
+        <div class="brand-text">
+          <div class="brand-title">CTF Tournament</div>
+          <div class="brand-sub">Вход в аккаунт</div>
+        </div>
       </div>
-      <div style="flex:1; min-width:240px;">
-        <label>Пароль</label>
-        <input id="p" type="password" placeholder="password">
+
+      <nav class="landing-nav">
+        <a class="nav-link" href="/">На главную</a>
+        <a class="nav-link" href="/register">Регистрация</a>
+      </nav>
+
+      <div class="landing-actions">
+        <a class="btn secondary" href="/">Главная</a>
+        <a class="btn" href="/register">Регистрация</a>
       </div>
     </div>
-    <div class="row" style="margin-top:12px;">
-      <button class="btn" id="loginBtn">Войти</button>
-      <button class="btn secondary" onclick="location.href='/'">На главную</button>
-    </div>
-    <p class="small" style="margin-top:12px;">
-      Еще нет аккаунта? <a href="/register">Зарегистрироваться</a>
-    </p>
-    <p id="err" class="small" style="color:#ff9a9a;"></p>
-  </div>
+  </header>
+
+  <main class="landing-main">
+    <section class="auth-wrap">
+      <div class="landing-shell auth-grid">
+        <div class="auth-left glass">
+          <div class="chip"><span class="dot"></span> Безопасный вход</div>
+          <h1 class="auth-title">С возвращением</h1>
+          <p class="muted auth-desc">
+            Войди в систему, чтобы подавать заявки на матчи, управлять командами и смотреть рейтинг.
+          </p>
+
+          <div class="auth-bullets">
+            <div class="bullet"><span>⚡</span> Быстрый доступ к матчам</div>
+            <div class="bullet"><span>👥</span> Команды и участие в team-матчах</div>
+            <div class="bullet"><span>📈</span> Рейтинг и история</div>
+          </div>
+
+          <div class="small muted" style="margin-top:14px;">
+            Нет аккаунта? <a class="link" href="/register">Зарегистрироваться</a>
+          </div>
+        </div>
+
+        <div class="auth-right glass">
+          <div class="auth-card-head">
+            <div>
+              <div class="auth-card-title">Вход</div>
+              <div class="small muted">Введите логин и пароль</div>
+            </div>
+            <a class="btn secondary" href="/">← Назад</a>
+          </div>
+
+          <form id="loginForm" class="auth-form">
+            <label class="field">
+              <span class="field-label">Логин</span>
+              <input id="username" autocomplete="username" placeholder="например: kris" required />
+            </label>
+
+            <label class="field">
+              <span class="field-label">Пароль</span>
+              <div class="field-pass">
+                <input id="password" type="password" autocomplete="current-password" placeholder="••••••••" required />
+                <button type="button" class="icon-btn" id="togglePass" aria-label="Показать пароль">👁</button>
+              </div>
+            </label>
+
+            <button class="btn auth-submit" type="submit">Войти</button>
+
+            <div id="msg" class="small" style="margin-top:10px;"></div>
+
+            <div class="auth-divider"><span>или</span></div>
+
+            <a class="btn secondary auth-alt" href="/register">Создать аккаунт</a>
+          </form>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="noise"></div>
 
 <script type="module">
 import { api } from "/static/assets/api.js";
-document.getElementById("loginBtn").onclick = async () => {
-  document.getElementById("err").textContent = "";
+
+const form = document.getElementById("loginForm");
+const msg = document.getElementById("msg");
+
+document.getElementById("togglePass").onclick = () => {
+  const p = document.getElementById("password");
+  p.type = (p.type === "password") ? "text" : "password";
+};
+
+form.onsubmit = async (e) => {
+  e.preventDefault();
+  msg.textContent = "Проверяю...";
+  msg.style.color = "rgba(255,255,255,.85)";
+
+  const username = document.getElementById("username").value.trim();
+  const password = document.getElementById("password").value;
+
   try {
-    await api("/auth/login", "POST", {
-      username: document.getElementById("u").value.trim(),
-      password: document.getElementById("p").value
-    });
+    await api("/auth/login", "POST", { username, password });
     location.href = "/dashboard";
-  } catch(e){ document.getElementById("err").textContent = e.message; }
+  } catch (err) {
+    msg.textContent = "Ошибка входа: " + err.message;
+    msg.style.color = "#ff9a9a";
+  }
 };
 </script>
 </body>
