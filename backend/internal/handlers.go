@@ -3,20 +3,63 @@ package internal
 import (
 	"context"
 	"strconv"
+	"strings"
 
+	sq "github.com/Masterminds/squirrel"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+/* ===================== LIMITS ===================== */
+
+func clampRunes(s string, max int) string {
+	s = strings.TrimSpace(s)
+	r := []rune(s)
+	if len(r) > max {
+		r = r[:max]
+	}
+	return string(r)
+}
+
+func jsonErr(c *gin.Context, code int, msg string) {
+	c.JSON(code, gin.H{"error": msg})
+}
+
+func normStatus(s string) string {
+	s = clampRunes(strings.ToLower(s), MaxStatus)
+	switch s {
+	case "open", "closed", "finished", "all", "":
+		return s
+	default:
+		return "invalid"
+	}
+}
+
+func normMode(s string) string {
+	s = clampRunes(strings.ToLower(s), MaxMode)
+	switch s {
+	case "solo", "team":
+		return s
+	default:
+		return "invalid"
+	}
+}
+
+/* ===================== BASIC ===================== */
+
 func Me(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := uid(c)
+		ctx := context.Background()
+
 		var u User
-		err := db.QueryRow(context.Background(),
-			"SELECT id, username, role, points FROM users WHERE id=$1", id,
-		).Scan(&u.ID, &u.Username, &u.Role, &u.Points)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+		q := sq.Select("id", "username", "role", "points").
+			From("users").
+			Where(sq.Eq{"id": id}).
+			PlaceholderFormat(sq.Dollar)
+
+		if err := qRow(ctx, db, q).Scan(&u.ID, &u.Username, &u.Role, &u.Points); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 		c.JSON(200, u)
@@ -24,23 +67,38 @@ func Me(db *pgxpool.Pool) gin.HandlerFunc {
 }
 
 func userHasAnyTeam(db *pgxpool.Pool, userID int) (bool, error) {
+	ctx := context.Background()
+
+	sub := sq.Select("1").
+		From("team_members").
+		Where(sq.Eq{"user_id": userID}).
+		PlaceholderFormat(sq.Dollar)
+
+	q := sq.Select().
+		Column(sq.Expr("EXISTS(?)", sub)).
+		PlaceholderFormat(sq.Dollar)
+
 	var ok bool
-	err := db.QueryRow(context.Background(),
-		"SELECT EXISTS(SELECT 1 FROM team_members WHERE user_id=$1)",
-		userID,
-	).Scan(&ok)
+	err := qRow(ctx, db, q).Scan(&ok)
 	return ok, err
 }
 
-// ------------------- Rating -------------------
+/* ===================== RATING ===================== */
 
 func Rating(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		rows, err := db.Query(context.Background(),
-			"SELECT id, username, role, points FROM users WHERE role <> 'admin' ORDER BY points DESC, id ASC LIMIT 100",
-		)
+		ctx := context.Background()
+
+		q := sq.Select("id", "username", "role", "points").
+			From("users").
+			Where(sq.NotEq{"role": "admin"}).
+			OrderBy("points DESC", "id ASC").
+			Limit(100).
+			PlaceholderFormat(sq.Dollar)
+
+		rows, err := qQuery(ctx, db, q)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 		defer rows.Close()
@@ -55,25 +113,32 @@ func Rating(db *pgxpool.Pool) gin.HandlerFunc {
 	}
 }
 
-// ------------------- Matches (user) -------------------
+/* ===================== MATCHES (USER) ===================== */
 
 // GET /api/matches?status=open|closed|finished|all
 func ListMatches(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		status := c.Query("status")
+		status := normStatus(c.Query("status"))
+		if status == "invalid" {
+			jsonErr(c, 400, "Некорректный статус")
+			return
+		}
+
 		ctx := context.Background()
 
-		sql := "SELECT id, title, mode, status FROM matches"
-		args := []any{}
-		if status != "" && status != "all" {
-			sql += " WHERE status=$1"
-			args = append(args, status)
-		}
-		sql += " ORDER BY id DESC LIMIT 200"
+		q := sq.Select("id", "title", "mode", "status").
+			From("matches").
+			OrderBy("id DESC").
+			Limit(200).
+			PlaceholderFormat(sq.Dollar)
 
-		rows, err := db.Query(ctx, sql, args...)
+		if status != "" && status != "all" {
+			q = q.Where(sq.Eq{"status": status})
+		}
+
+		rows, err := qQuery(ctx, db, q)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 		defer rows.Close()
@@ -94,12 +159,14 @@ func MyApplications(db *pgxpool.Pool) gin.HandlerFunc {
 		userID := uid(c)
 		ctx := context.Background()
 
-		rows, err := db.Query(ctx,
-			"SELECT match_id, status FROM applications WHERE user_id=$1",
-			userID,
-		)
+		q := sq.Select("match_id", "status").
+			From("applications").
+			Where(sq.Eq{"user_id": userID}).
+			PlaceholderFormat(sq.Dollar)
+
+		rows, err := qQuery(ctx, db, q)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 		defer rows.Close()
@@ -115,11 +182,15 @@ func MyApplications(db *pgxpool.Pool) gin.HandlerFunc {
 	}
 }
 
-// POST /api/matches/:id/apply  (для team матчей нужен team_id)
+// POST /api/matches/:id/apply (для team матчей нужен team_id)
 func ApplyToMatch(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := uid(c)
 		matchID, _ := strconv.Atoi(c.Param("id"))
+		if matchID <= 0 {
+			jsonErr(c, 400, "Некорректный матч")
+			return
+		}
 
 		var req struct {
 			TeamID *int `json:"team_id"`
@@ -128,66 +199,80 @@ func ApplyToMatch(db *pgxpool.Pool) gin.HandlerFunc {
 
 		ctx := context.Background()
 
-		var mode, status string
-		err := db.QueryRow(ctx,
-			"SELECT mode, status FROM matches WHERE id=$1",
-			matchID,
-		).Scan(&mode, &status)
-		if err != nil {
-			c.JSON(404, gin.H{"error": "match not found"})
+		var mode, status, title string
+		qMatch := sq.Select("mode", "status", "title").
+			From("matches").
+			Where(sq.Eq{"id": matchID}).
+			PlaceholderFormat(sq.Dollar)
+
+		if err := qRow(ctx, db, qMatch).Scan(&mode, &status, &title); err != nil {
+			jsonErr(c, 404, "Матч не найден")
 			return
 		}
 		if status != "open" {
-			c.JSON(400, gin.H{"error": "match is not open"})
+			jsonErr(c, 400, "Матч закрыт для заявок")
 			return
 		}
 
 		if mode == "team" {
-			if req.TeamID == nil {
-				c.JSON(400, gin.H{"error": "team_id is required for team match"})
+			if req.TeamID == nil || *req.TeamID <= 0 {
+				jsonErr(c, 400, "Выберите команду")
 				return
 			}
+
+			sub := sq.Select("1").
+				From("team_members").
+				Where(sq.Eq{"team_id": *req.TeamID, "user_id": userID}).
+				PlaceholderFormat(sq.Dollar)
+
+			qExists := sq.Select().
+				Column(sq.Expr("EXISTS(?)", sub)).
+				PlaceholderFormat(sq.Dollar)
+
 			var ok bool
-			_ = db.QueryRow(ctx,
-				"SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id=$1 AND user_id=$2)",
-				*req.TeamID, userID,
-			).Scan(&ok)
+			_ = qRow(ctx, db, qExists).Scan(&ok)
 			if !ok {
-				c.JSON(403, gin.H{"error": "you are not a member of this team"})
+				jsonErr(c, 403, "Вы не состоите в выбранной команде")
 				return
 			}
 		} else {
 			req.TeamID = nil
 		}
 
-		_, err = db.Exec(ctx,
-			`INSERT INTO applications(match_id, user_id, team_id)
-			 VALUES ($1,$2,$3)
-			 ON CONFLICT(match_id,user_id) DO NOTHING`,
-			matchID, userID, req.TeamID,
-		)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+		ins := sq.Insert("applications").
+			Columns("match_id", "user_id", "team_id").
+			Values(matchID, userID, req.TeamID).
+			Suffix("ON CONFLICT(match_id,user_id) DO NOTHING").
+			PlaceholderFormat(sq.Dollar)
+
+		if _, err := qExec(ctx, db, ins); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 
-		logAction(db, &userID, "apply_match", "match_id="+strconv.Itoa(matchID))
+		// ✅ лог без ID и без username
+		logAction(db, &userID, "apply_match", "Пользователь подал заявку на матч: "+clampRunes(title, MaxReportLine))
+
 		c.JSON(200, gin.H{"ok": true})
 	}
 }
 
-// GET /api/history (участие через match_participants)
+// GET /api/history
 func MyHistory(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := uid(c)
-		rows, err := db.Query(context.Background(),
-			`SELECT m.id, m.title, m.mode, m.status
-			 FROM match_participants mp
-			 JOIN matches m ON m.id=mp.match_id
-			 WHERE mp.user_id=$1
-			 ORDER BY m.id DESC`, userID)
+		ctx := context.Background()
+
+		q := sq.Select("m.id", "m.title", "m.mode", "m.status").
+			From("match_participants mp").
+			Join("matches m ON m.id = mp.match_id").
+			Where(sq.Eq{"mp.user_id": userID}).
+			OrderBy("m.id DESC").
+			PlaceholderFormat(sq.Dollar)
+
+		rows, err := qQuery(ctx, db, q)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 		defer rows.Close()
@@ -202,19 +287,20 @@ func MyHistory(db *pgxpool.Pool) gin.HandlerFunc {
 	}
 }
 
-// ------------------- Teams (user) -------------------
+/* ===================== TEAMS (USER) ===================== */
 
 func CreateTeam(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := uid(c)
+		ctx := context.Background()
 
 		has, err := userHasAnyTeam(db, userID)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 		if has {
-			c.JSON(400, gin.H{"error": "you must leave your current team first"})
+			jsonErr(c, 400, "Сначала выйдите из текущей команды")
 			return
 		}
 
@@ -222,27 +308,38 @@ func CreateTeam(db *pgxpool.Pool) gin.HandlerFunc {
 			Name   string `json:"name"`
 			IsOpen bool   `json:"is_open"`
 		}
-		if err := c.BindJSON(&req); err != nil || req.Name == "" {
-			c.JSON(400, gin.H{"error": "bad request"})
+		if err := c.BindJSON(&req); err != nil {
+			jsonErr(c, 400, "Некорректные данные")
 			return
 		}
+
+		req.Name = clampRunes(req.Name, MaxTeamName)
+		if req.Name == "" {
+			jsonErr(c, 400, "Введите название команды")
+			return
+		}
+
+		insTeam := sq.Insert("teams").
+			Columns("name", "owner_id", "is_open").
+			Values(req.Name, userID, req.IsOpen).
+			Suffix("RETURNING id").
+			PlaceholderFormat(sq.Dollar)
 
 		var teamID int
-		err = db.QueryRow(context.Background(),
-			"INSERT INTO teams(name, owner_id, is_open) VALUES ($1,$2,$3) RETURNING id",
-			req.Name, userID, req.IsOpen,
-		).Scan(&teamID)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+		if err := qRow(ctx, db, insTeam).Scan(&teamID); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 
-		_, _ = db.Exec(context.Background(),
-			"INSERT INTO team_members(team_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
-			teamID, userID,
-		)
+		insMember := sq.Insert("team_members").
+			Columns("team_id", "user_id").
+			Values(teamID, userID).
+			Suffix("ON CONFLICT DO NOTHING").
+			PlaceholderFormat(sq.Dollar)
 
-		logAction(db, &userID, "create_team", "team_id="+strconv.Itoa(teamID))
+		_, _ = qExec(ctx, db, insMember)
+
+		logAction(db, &userID, "create_team", "Пользователь создал команду")
 		c.JSON(200, gin.H{"ok": true, "team_id": teamID})
 	}
 }
@@ -262,15 +359,15 @@ func ListOpenTeams(db *pgxpool.Pool) gin.HandlerFunc {
 			Members []UserMini `json:"members"`
 		}
 
-		// 1) команды open
-		rows, err := db.Query(ctx, `
-			SELECT id, name, is_open
-			FROM teams
-			WHERE is_open=true
-			ORDER BY id DESC
-		`)
+		qTeams := sq.Select("id", "name", "is_open").
+			From("teams").
+			Where(sq.Eq{"is_open": true}).
+			OrderBy("id DESC").
+			PlaceholderFormat(sq.Dollar)
+
+		rows, err := qQuery(ctx, db, qTeams)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 		defer rows.Close()
@@ -291,17 +388,17 @@ func ListOpenTeams(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		// 2) участники всех OPEN команд одним запросом
-		rowsM, err := db.Query(ctx, `
-			SELECT tm.team_id, u.id, u.username
-			FROM team_members tm
-			JOIN users u ON u.id = tm.user_id
-			JOIN teams t ON t.id = tm.team_id
-			WHERE t.is_open=true
-			ORDER BY tm.team_id, u.username
-		`)
+		qMembers := sq.Select("tm.team_id", "u.id", "u.username").
+			From("team_members tm").
+			Join("users u ON u.id = tm.user_id").
+			Join("teams t ON t.id = tm.team_id").
+			Where(sq.Eq{"t.is_open": true}).
+			OrderBy("tm.team_id", "u.username").
+			PlaceholderFormat(sq.Dollar)
+
+		rowsM, err := qQuery(ctx, db, qMembers)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 		defer rowsM.Close()
@@ -335,16 +432,16 @@ func MyTeams(db *pgxpool.Pool) gin.HandlerFunc {
 			Members []UserMini `json:"members"`
 		}
 
-		// 1) мои команды
-		rows, err := db.Query(ctx, `
-			SELECT t.id, t.name, t.is_open
-			FROM team_members tm
-			JOIN teams t ON t.id = tm.team_id
-			WHERE tm.user_id = $1
-			ORDER BY t.name ASC
-		`, userID)
+		qTeams := sq.Select("t.id", "t.name", "t.is_open").
+			From("team_members tm").
+			Join("teams t ON t.id = tm.team_id").
+			Where(sq.Eq{"tm.user_id": userID}).
+			OrderBy("t.name ASC").
+			PlaceholderFormat(sq.Dollar)
+
+		rows, err := qQuery(ctx, db, qTeams)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 		defer rows.Close()
@@ -365,19 +462,22 @@ func MyTeams(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		// 2) состав только моих команд
-		rowsM, err := db.Query(ctx, `
-			SELECT tm.team_id, u.id, u.username
-			FROM team_members tm
-			JOIN users u ON u.id = tm.user_id
-			WHERE EXISTS (
-				SELECT 1 FROM team_members me
-				WHERE me.team_id = tm.team_id AND me.user_id = $1
-			)
-			ORDER BY tm.team_id, u.username
-		`, userID)
+		subMe := sq.Select("1").
+			From("team_members me").
+			Where(sq.Expr("me.team_id = tm.team_id")).
+			Where(sq.Eq{"me.user_id": userID}).
+			PlaceholderFormat(sq.Dollar)
+
+		qMembers := sq.Select("tm.team_id", "u.id", "u.username").
+			From("team_members tm").
+			Join("users u ON u.id = tm.user_id").
+			Where(sq.Expr("EXISTS(?)", subMe)).
+			OrderBy("tm.team_id", "u.username").
+			PlaceholderFormat(sq.Dollar)
+
+		rowsM, err := qQuery(ctx, db, qMembers)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 		defer rowsM.Close()
@@ -399,35 +499,46 @@ func JoinTeam(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := uid(c)
 		teamID, _ := strconv.Atoi(c.Param("id"))
+		if teamID <= 0 {
+			jsonErr(c, 400, "Некорректная команда")
+			return
+		}
+
+		ctx := context.Background()
 
 		has, err := userHasAnyTeam(db, userID)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 		if has {
-			c.JSON(400, gin.H{"error": "you must leave your current team first"})
+			jsonErr(c, 400, "Сначала выйдите из текущей команды")
 			return
 		}
+
+		qTeam := sq.Select("is_open").
+			From("teams").
+			Where(sq.Eq{"id": teamID}).
+			PlaceholderFormat(sq.Dollar)
 
 		var isOpen bool
-		if err := db.QueryRow(context.Background(),
-			"SELECT is_open FROM teams WHERE id=$1", teamID,
-		).Scan(&isOpen); err != nil || !isOpen {
-			c.JSON(403, gin.H{"error": "team closed or not found"})
+		if err := qRow(ctx, db, qTeam).Scan(&isOpen); err != nil || !isOpen {
+			jsonErr(c, 403, "Команда недоступна")
 			return
 		}
 
-		_, err = db.Exec(context.Background(),
-			"INSERT INTO team_members(team_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
-			teamID, userID,
-		)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+		ins := sq.Insert("team_members").
+			Columns("team_id", "user_id").
+			Values(teamID, userID).
+			Suffix("ON CONFLICT DO NOTHING").
+			PlaceholderFormat(sq.Dollar)
+
+		if _, err := qExec(ctx, db, ins); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 
-		logAction(db, &userID, "join_team", "team_id="+strconv.Itoa(teamID))
+		logAction(db, &userID, "join_team", "Пользователь вступил в команду")
 		c.JSON(200, gin.H{"ok": true})
 	}
 }
@@ -436,41 +547,54 @@ func LeaveTeam(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := uid(c)
 		teamID, _ := strconv.Atoi(c.Param("id"))
-
-		_, err := db.Exec(context.Background(),
-			"DELETE FROM team_members WHERE team_id=$1 AND user_id=$2",
-			teamID, userID,
-		)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+		if teamID <= 0 {
+			jsonErr(c, 400, "Некорректная команда")
 			return
 		}
-		logAction(db, &userID, "leave_team", "team_id="+strconv.Itoa(teamID))
+
+		ctx := context.Background()
+
+		del := sq.Delete("team_members").
+			Where(sq.Eq{"team_id": teamID, "user_id": userID}).
+			PlaceholderFormat(sq.Dollar)
+
+		if _, err := qExec(ctx, db, del); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
+			return
+		}
+
+		logAction(db, &userID, "leave_team", "Пользователь вышел из команды")
 		c.JSON(200, gin.H{"ok": true})
 	}
 }
 
-// ------------------- Admin: logs/users -------------------
+/* ===================== ADMIN: LOGS/USERS ===================== */
 
 func AdminLogs(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		rows, err := db.Query(context.Background(),
-			`SELECT l.id,
-			        to_char(l.created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at,
-			        COALESCE(u.username,'(deleted)') AS actor,
-			        l.action,
-			        l.details
-			 FROM logs l
-			 LEFT JOIN users u ON u.id=l.actor_id
-			 ORDER BY l.id DESC LIMIT 200`)
+		ctx := context.Background()
+
+		// ✅ без ID и без username
+		q := sq.Select(
+			"to_char(l.created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at",
+			"CASE WHEN u.role='admin' THEN 'Администратор' ELSE 'Пользователь' END AS actor",
+			"l.action",
+			"l.details",
+		).
+			From("logs l").
+			LeftJoin("users u ON u.id = l.actor_id").
+			OrderBy("l.id DESC").
+			Limit(200).
+			PlaceholderFormat(sq.Dollar)
+
+		rows, err := qQuery(ctx, db, q)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 		defer rows.Close()
 
 		type row struct {
-			ID        int64  `json:"id"`
 			CreatedAt string `json:"created_at"`
 			Actor     string `json:"actor"`
 			Action    string `json:"action"`
@@ -480,8 +604,8 @@ func AdminLogs(db *pgxpool.Pool) gin.HandlerFunc {
 		out := []row{}
 		for rows.Next() {
 			var r row
-			if err := rows.Scan(&r.ID, &r.CreatedAt, &r.Actor, &r.Action, &r.Details); err != nil {
-				c.JSON(500, gin.H{"error": "scan"})
+			if err := rows.Scan(&r.CreatedAt, &r.Actor, &r.Action, &r.Details); err != nil {
+				jsonErr(c, 500, "Ошибка сервера")
 				return
 			}
 			out = append(out, r)
@@ -493,11 +617,16 @@ func AdminLogs(db *pgxpool.Pool) gin.HandlerFunc {
 
 func AdminUsers(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		rows, err := db.Query(context.Background(),
-			"SELECT id, username, role, points FROM users ORDER BY id ASC",
-		)
+		ctx := context.Background()
+
+		q := sq.Select("id", "username", "role", "points").
+			From("users").
+			OrderBy("id ASC").
+			PlaceholderFormat(sq.Dollar)
+
+		rows, err := qQuery(ctx, db, q)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 		defer rows.Close()
@@ -516,16 +645,27 @@ func AdminDeleteUser(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		actor := uid(c)
 		id, _ := strconv.Atoi(c.Param("id"))
+		if id <= 0 {
+			jsonErr(c, 400, "Некорректный пользователь")
+			return
+		}
 		if id == actor {
-			c.JSON(400, gin.H{"error": "cannot delete yourself"})
+			jsonErr(c, 400, "Нельзя удалить самого себя")
 			return
 		}
-		_, err := db.Exec(context.Background(), "DELETE FROM users WHERE id=$1", id)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+
+		ctx := context.Background()
+
+		del := sq.Delete("users").
+			Where(sq.Eq{"id": id}).
+			PlaceholderFormat(sq.Dollar)
+
+		if _, err := qExec(ctx, db, del); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
-		logAction(db, &actor, "admin_delete_user", "user_id="+strconv.Itoa(id))
+
+		logAction(db, &actor, "admin_delete_user", "Администратор удалил пользователя")
 		c.JSON(200, gin.H{"ok": true})
 	}
 }
@@ -534,48 +674,75 @@ func AdminSetPoints(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		actor := uid(c)
 		id, _ := strconv.Atoi(c.Param("id"))
+		if id <= 0 {
+			jsonErr(c, 400, "Некорректный пользователь")
+			return
+		}
+
 		var req struct {
 			Points int `json:"points"`
 		}
 		if err := c.BindJSON(&req); err != nil {
-			c.JSON(400, gin.H{"error": "bad request"})
+			jsonErr(c, 400, "Некорректные данные")
 			return
 		}
-		_, err := db.Exec(context.Background(),
-			"UPDATE users SET points=$1 WHERE id=$2",
-			req.Points, id,
-		)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+		if req.Points < 0 || req.Points > 1_000_000 {
+			jsonErr(c, 400, "Некорректное значение очков")
 			return
 		}
-		logAction(db, &actor, "admin_set_points", "user_id="+strconv.Itoa(id))
+
+		ctx := context.Background()
+
+		upd := sq.Update("users").
+			Set("points", req.Points).
+			Where(sq.Eq{"id": id}).
+			PlaceholderFormat(sq.Dollar)
+
+		if _, err := qExec(ctx, db, upd); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
+			return
+		}
+
+		logAction(db, &actor, "admin_set_points", "Администратор изменил очки пользователя")
 		c.JSON(200, gin.H{"ok": true})
 	}
 }
 
-// ------------------- Admin: matches CRUD -------------------
+/* ===================== ADMIN: MATCHES CRUD ===================== */
 
 func AdminCreateMatch(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		actor := uid(c)
+
 		var req struct {
 			Title string `json:"title"`
-			Mode  string `json:"mode"` // solo|team
+			Mode  string `json:"mode"`
 		}
-		if err := c.BindJSON(&req); err != nil || req.Title == "" || (req.Mode != "solo" && req.Mode != "team") {
-			c.JSON(400, gin.H{"error": "bad request"})
+		if err := c.BindJSON(&req); err != nil {
+			jsonErr(c, 400, "Некорректные данные")
 			return
 		}
-		_, err := db.Exec(context.Background(),
-			"INSERT INTO matches(title, mode, status, created_by) VALUES ($1,$2,'open',$3)",
-			req.Title, req.Mode, actor,
-		)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+
+		req.Title = clampRunes(req.Title, MaxMatchTitle)
+		req.Mode = normMode(req.Mode)
+		if req.Title == "" || req.Mode == "invalid" {
+			jsonErr(c, 400, "Некорректные данные")
 			return
 		}
-		logAction(db, &actor, "admin_create_match", req.Title)
+
+		ctx := context.Background()
+
+		ins := sq.Insert("matches").
+			Columns("title", "mode", "status", "created_by").
+			Values(req.Title, req.Mode, "open", actor).
+			PlaceholderFormat(sq.Dollar)
+
+		if _, err := qExec(ctx, db, ins); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
+			return
+		}
+
+		logAction(db, &actor, "admin_create_match", "Администратор создал матч: "+clampRunes(req.Title, MaxReportLine))
 		c.JSON(200, gin.H{"ok": true})
 	}
 }
@@ -584,24 +751,44 @@ func AdminUpdateMatch(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		actor := uid(c)
 		id, _ := strconv.Atoi(c.Param("id"))
+		if id <= 0 {
+			jsonErr(c, 400, "Некорректный матч")
+			return
+		}
+
 		var req struct {
 			Title  string `json:"title"`
 			Mode   string `json:"mode"`
-			Status string `json:"status"` // open|closed|finished
+			Status string `json:"status"`
 		}
 		if err := c.BindJSON(&req); err != nil {
-			c.JSON(400, gin.H{"error": "bad request"})
+			jsonErr(c, 400, "Некорректные данные")
 			return
 		}
-		_, err := db.Exec(context.Background(),
-			"UPDATE matches SET title=$1, mode=$2, status=$3 WHERE id=$4",
-			req.Title, req.Mode, req.Status, id,
-		)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+
+		req.Title = clampRunes(req.Title, MaxMatchTitle)
+		req.Mode = normMode(req.Mode)
+		req.Status = normStatus(req.Status)
+		if req.Title == "" || req.Mode == "invalid" || req.Status == "invalid" || req.Status == "all" || req.Status == "" {
+			jsonErr(c, 400, "Некорректные данные")
 			return
 		}
-		logAction(db, &actor, "admin_update_match", "match_id="+strconv.Itoa(id))
+
+		ctx := context.Background()
+
+		upd := sq.Update("matches").
+			Set("title", req.Title).
+			Set("mode", req.Mode).
+			Set("status", req.Status).
+			Where(sq.Eq{"id": id}).
+			PlaceholderFormat(sq.Dollar)
+
+		if _, err := qExec(ctx, db, upd); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
+			return
+		}
+
+		logAction(db, &actor, "admin_update_match", "Администратор изменил матч")
 		c.JSON(200, gin.H{"ok": true})
 	}
 }
@@ -610,32 +797,50 @@ func AdminDeleteMatch(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		actor := uid(c)
 		id, _ := strconv.Atoi(c.Param("id"))
-		_, err := db.Exec(context.Background(), "DELETE FROM matches WHERE id=$1", id)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+		if id <= 0 {
+			jsonErr(c, 400, "Некорректный матч")
 			return
 		}
-		logAction(db, &actor, "admin_delete_match", "match_id="+strconv.Itoa(id))
+
+		ctx := context.Background()
+
+		del := sq.Delete("matches").
+			Where(sq.Eq{"id": id}).
+			PlaceholderFormat(sq.Dollar)
+
+		if _, err := qExec(ctx, db, del); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
+			return
+		}
+
+		logAction(db, &actor, "admin_delete_match", "Администратор удалил матч")
 		c.JSON(200, gin.H{"ok": true})
 	}
 }
 
 func AdminListMatches(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		status := c.Query("status") // open|closed|finished|all
+		status := normStatus(c.Query("status"))
+		if status == "invalid" {
+			jsonErr(c, 400, "Некорректный статус")
+			return
+		}
+
 		ctx := context.Background()
 
-		sql := "SELECT id, title, mode, status FROM matches"
-		args := []any{}
-		if status != "" && status != "all" {
-			sql += " WHERE status=$1"
-			args = append(args, status)
-		}
-		sql += " ORDER BY id DESC LIMIT 500"
+		q := sq.Select("id", "title", "mode", "status").
+			From("matches").
+			OrderBy("id DESC").
+			Limit(500).
+			PlaceholderFormat(sq.Dollar)
 
-		rows, err := db.Query(ctx, sql, args...)
+		if status != "" && status != "all" {
+			q = q.Where(sq.Eq{"status": status})
+		}
+
+		rows, err := qQuery(ctx, db, q)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 		defer rows.Close()
@@ -654,25 +859,39 @@ func AdminCloseMatch(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		actor := uid(c)
 		matchID, _ := strconv.Atoi(c.Param("id"))
+		if matchID <= 0 {
+			jsonErr(c, 400, "Некорректный матч")
+			return
+		}
+
 		ctx := context.Background()
 
-		var status string
-		if err := db.QueryRow(ctx, "SELECT status FROM matches WHERE id=$1", matchID).Scan(&status); err != nil {
-			c.JSON(404, gin.H{"error": "match not found"})
+		qSt := sq.Select("status", "title").
+			From("matches").
+			Where(sq.Eq{"id": matchID}).
+			PlaceholderFormat(sq.Dollar)
+
+		var status, title string
+		if err := qRow(ctx, db, qSt).Scan(&status, &title); err != nil {
+			jsonErr(c, 404, "Матч не найден")
 			return
 		}
 		if status == "finished" {
-			c.JSON(400, gin.H{"error": "match already finished"})
+			jsonErr(c, 400, "Матч уже завершён")
 			return
 		}
 
-		_, err := db.Exec(ctx, "UPDATE matches SET status='closed' WHERE id=$1", matchID)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+		upd := sq.Update("matches").
+			Set("status", "closed").
+			Where(sq.Eq{"id": matchID}).
+			PlaceholderFormat(sq.Dollar)
+
+		if _, err := qExec(ctx, db, upd); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 
-		logAction(db, &actor, "admin_close_match", "match_id="+strconv.Itoa(matchID))
+		logAction(db, &actor, "admin_close_match", "Администратор закрыл матч: "+clampRunes(title, MaxReportLine))
 		c.JSON(200, gin.H{"ok": true})
 	}
 }
@@ -681,21 +900,25 @@ func AdminCloseMatch(db *pgxpool.Pool) gin.HandlerFunc {
 
 func AdminListApplications(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		rows, err := db.Query(context.Background(), `
-			SELECT
-				a.id,
-				m.title,
-				u.username,
-				COALESCE(t.name,''),
-				a.status
-			FROM applications a
-			JOIN matches m ON m.id = a.match_id
-			JOIN users u ON u.id = a.user_id
-			LEFT JOIN teams t ON t.id = a.team_id
-			ORDER BY a.id DESC
-		`)
+		ctx := context.Background()
+
+		q := sq.Select(
+			"a.id",
+			"m.title",
+			"u.username",
+			"COALESCE(t.name,'')",
+			"a.status",
+		).
+			From("applications a").
+			Join("matches m ON m.id = a.match_id").
+			Join("users u ON u.id = a.user_id").
+			LeftJoin("teams t ON t.id = a.team_id").
+			OrderBy("a.id DESC").
+			PlaceholderFormat(sq.Dollar)
+
+		rows, err := qQuery(ctx, db, q)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 		defer rows.Close()
@@ -714,91 +937,126 @@ func AdminListApplications(db *pgxpool.Pool) gin.HandlerFunc {
 			_ = rows.Scan(&r.ID, &r.Match, &r.User, &r.Team, &r.Status)
 			out = append(out, r)
 		}
-
 		c.JSON(200, out)
 	}
 }
 
 func AdminApproveApplication(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		actor := uid(c)
 		appID, _ := strconv.Atoi(c.Param("id"))
+		if appID <= 0 {
+			jsonErr(c, 400, "Некорректная заявка")
+			return
+		}
+
 		ctx := context.Background()
 
 		var matchID, userID int
 		var teamID *int
-		var status string
+		var st string
+		qApp := sq.Select("match_id", "user_id", "team_id", "status").
+			From("applications").
+			Where(sq.Eq{"id": appID}).
+			PlaceholderFormat(sq.Dollar)
 
-		err := db.QueryRow(ctx,
-			"SELECT match_id,user_id,team_id,status FROM applications WHERE id=$1",
-			appID,
-		).Scan(&matchID, &userID, &teamID, &status)
+		if err := qRow(ctx, db, qApp).Scan(&matchID, &userID, &teamID, &st); err != nil {
+			jsonErr(c, 404, "Заявка не найдена")
+			return
+		}
+		if strings.ToLower(st) != "pending" {
+			jsonErr(c, 400, "Решение уже принято")
+			return
+		}
 
+		tx, err := db.Begin(ctx)
 		if err != nil {
-			c.JSON(404, gin.H{"error": "not found"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
-
-		if status != "pending" {
-			c.JSON(400, gin.H{"error": "application already processed"})
-			return
-		}
-
-		tx, _ := db.Begin(ctx)
 		defer tx.Rollback(ctx)
 
-		_, _ = tx.Exec(ctx,
-			"UPDATE applications SET status='approved' WHERE id=$1", appID)
+		upd := sq.Update("applications").
+			Set("status", "approved").
+			Where(sq.Eq{"id": appID}).
+			PlaceholderFormat(sq.Dollar)
+		_, _ = qExecTx(ctx, tx, upd)
 
-		_, _ = tx.Exec(ctx,
-			"INSERT INTO match_participants(match_id,user_id,team_id) VALUES ($1,$2,$3)",
-			matchID, userID, teamID)
+		ins := sq.Insert("match_participants").
+			Columns("match_id", "user_id", "team_id").
+			Values(matchID, userID, teamID).
+			PlaceholderFormat(sq.Dollar)
+		_, _ = qExecTx(ctx, tx, ins)
 
-		_ = tx.Commit(ctx)
+		if err := tx.Commit(ctx); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
+			return
+		}
+
+		logAction(db, &actor, "admin_approve_application", "Администратор одобрил заявку")
 		c.JSON(200, gin.H{"ok": true})
 	}
 }
 
 func AdminRejectApplication(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		actor := uid(c)
 		appID, _ := strconv.Atoi(c.Param("id"))
+		if appID <= 0 {
+			jsonErr(c, 400, "Некорректная заявка")
+			return
+		}
+
 		ctx := context.Background()
 
 		var matchID, userID int
 		var teamID *int
-		var status string
+		var st string
+		qApp := sq.Select("match_id", "user_id", "team_id", "status").
+			From("applications").
+			Where(sq.Eq{"id": appID}).
+			PlaceholderFormat(sq.Dollar)
 
-		err := db.QueryRow(ctx,
-			"SELECT match_id,user_id,team_id,status FROM applications WHERE id=$1",
-			appID,
-		).Scan(&matchID, &userID, &teamID, &status)
+		if err := qRow(ctx, db, qApp).Scan(&matchID, &userID, &teamID, &st); err != nil {
+			jsonErr(c, 404, "Заявка не найдена")
+			return
+		}
+		if strings.ToLower(st) != "pending" {
+			jsonErr(c, 400, "Решение уже принято")
+			return
+		}
 
+		tx, err := db.Begin(ctx)
 		if err != nil {
-			c.JSON(404, gin.H{"error": "not found"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
-
-		if status != "pending" {
-			c.JSON(400, gin.H{"error": "application already processed"})
-			return
-		}
-
-		tx, _ := db.Begin(ctx)
 		defer tx.Rollback(ctx)
 
-		_, _ = tx.Exec(ctx,
-			"UPDATE applications SET status='rejected' WHERE id=$1", appID)
+		upd := sq.Update("applications").
+			Set("status", "rejected").
+			Where(sq.Eq{"id": appID}).
+			PlaceholderFormat(sq.Dollar)
+		_, _ = qExecTx(ctx, tx, upd)
 
+		var del sq.DeleteBuilder
 		if teamID != nil {
-			_, _ = tx.Exec(ctx,
-				"DELETE FROM match_participants WHERE match_id=$1 AND user_id=$2 AND team_id=$3",
-				matchID, userID, *teamID)
+			del = sq.Delete("match_participants").
+				Where(sq.Eq{"match_id": matchID, "user_id": userID, "team_id": *teamID}).
+				PlaceholderFormat(sq.Dollar)
 		} else {
-			_, _ = tx.Exec(ctx,
-				"DELETE FROM match_participants WHERE match_id=$1 AND user_id=$2",
-				matchID, userID)
+			del = sq.Delete("match_participants").
+				Where(sq.Eq{"match_id": matchID, "user_id": userID}).
+				PlaceholderFormat(sq.Dollar)
+		}
+		_, _ = qExecTx(ctx, tx, del)
+
+		if err := tx.Commit(ctx); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
+			return
 		}
 
-		_ = tx.Commit(ctx)
+		logAction(db, &actor, "admin_reject_application", "Администратор отклонил заявку")
 		c.JSON(200, gin.H{"ok": true})
 	}
 }
@@ -808,43 +1066,131 @@ func AdminRejectApplication(db *pgxpool.Pool) gin.HandlerFunc {
 func AdminMatchParticipants(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		matchID, _ := strconv.Atoi(c.Param("id"))
+		if matchID <= 0 {
+			jsonErr(c, 400, "Некорректный матч")
+			return
+		}
+		ctx := context.Background()
 
-		rows, err := db.Query(context.Background(), `
-			SELECT u.username,u.points
-			FROM match_participants mp
-			JOIN users u ON u.id=mp.user_id
-			WHERE mp.match_id=$1
-			ORDER BY u.username
-		`, matchID)
+		// 1) режим матча (через squirrel)
+		var mode string
+		qMode := sq.Select("mode").
+			From("matches").
+			Where(sq.Eq{"id": matchID}).
+			PlaceholderFormat(sq.Dollar)
 
+		if err := qRow(ctx, db, qMode).Scan(&mode); err != nil {
+			jsonErr(c, 404, "Матч не найден")
+			return
+		}
+
+		out := gin.H{
+			"match": gin.H{
+				"id":   matchID,
+				"mode": mode,
+			},
+		}
+
+		// 2) SOLO: users
+		if mode == "solo" {
+			type U struct {
+				ID       int    `json:"id"`
+				Username string `json:"username"`
+				Points   int    `json:"points"`
+			}
+
+			qUsers := sq.Select("u.id", "u.username", "u.points").
+				From("match_participants mp").
+				Join("users u ON u.id = mp.user_id").
+				Where(sq.Eq{"mp.match_id": matchID}).
+				OrderBy("u.username ASC").
+				PlaceholderFormat(sq.Dollar)
+
+			rows, err := qQuery(ctx, db, qUsers)
+			if err != nil {
+				jsonErr(c, 500, "Ошибка сервера")
+				return
+			}
+			defer rows.Close()
+
+			users := []U{}
+			for rows.Next() {
+				var u U
+				_ = rows.Scan(&u.ID, &u.Username, &u.Points)
+				users = append(users, u)
+			}
+
+			out["users"] = users
+			c.JSON(200, out)
+			return
+		}
+
+		// 3) TEAM: teams with members
+		type U struct {
+			ID       int    `json:"id"`
+			Username string `json:"username"`
+			Points   int    `json:"points"`
+		}
+		type T struct {
+			ID      int    `json:"id"`
+			Name    string `json:"name"`
+			Members []U    `json:"members"`
+		}
+
+		qTeamRows := sq.Select("t.id", "t.name", "u.id", "u.username", "u.points").
+			From("match_participants mp").
+			Join("teams t ON t.id = mp.team_id").
+			Join("users u ON u.id = mp.user_id").
+			Where(sq.Eq{"mp.match_id": matchID}).
+			Where(sq.Expr("mp.team_id IS NOT NULL")).
+			OrderBy("t.name ASC", "u.username ASC").
+			PlaceholderFormat(sq.Dollar)
+
+		rows, err := qQuery(ctx, db, qTeamRows)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 		defer rows.Close()
 
-		type U struct {
-			Username string `json:"username"`
-			Points   int    `json:"points"`
-		}
+		teamMap := map[int]*T{}
+		order := []int{}
 
-		var users []U
 		for rows.Next() {
+			var tid int
+			var tname string
 			var u U
-			_ = rows.Scan(&u.Username, &u.Points)
-			users = append(users, u)
+			_ = rows.Scan(&tid, &tname, &u.ID, &u.Username, &u.Points)
+
+			t, ok := teamMap[tid]
+			if !ok {
+				t = &T{ID: tid, Name: tname, Members: []U{}}
+				teamMap[tid] = t
+				order = append(order, tid)
+			}
+			t.Members = append(t.Members, u)
 		}
 
-		c.JSON(200, gin.H{"users": users})
+		teams := []T{}
+		for _, tid := range order {
+			teams = append(teams, *teamMap[tid])
+		}
+
+		out["teams"] = teams
+		c.JSON(200, out)
 	}
 }
 
-// ------------------- Admin: manual winner (team => all members) -------------------
+/* ===================== ADMIN: SET WINNER ===================== */
 
 func AdminSetWinner(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		actor := uid(c)
 		matchID, _ := strconv.Atoi(c.Param("id"))
+		if matchID <= 0 {
+			jsonErr(c, 400, "Некорректный матч")
+			return
+		}
 
 		var req struct {
 			WinnerUserID *int `json:"winner_user_id"`
@@ -852,260 +1198,259 @@ func AdminSetWinner(db *pgxpool.Pool) gin.HandlerFunc {
 			BonusPoints  int  `json:"bonus_points"`
 		}
 		if err := c.BindJSON(&req); err != nil {
-			c.JSON(400, gin.H{"error": "bad request"})
+			jsonErr(c, 400, "Некорректные данные")
 			return
 		}
 
 		if (req.WinnerUserID == nil && req.WinnerTeamID == nil) ||
 			(req.WinnerUserID != nil && req.WinnerTeamID != nil) {
-			c.JSON(400, gin.H{"error": "choose exactly one winner: winner_user_id OR winner_team_id"})
+			jsonErr(c, 400, "Выберите победителя")
 			return
 		}
-		if req.BonusPoints < 0 {
-			c.JSON(400, gin.H{"error": "bonus_points must be >= 0"})
+
+		if req.BonusPoints < 0 || req.BonusPoints > 1_000_000 {
+			jsonErr(c, 400, "Некорректные очки")
 			return
 		}
 
 		ctx := context.Background()
 		tx, err := db.Begin(ctx)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 		defer tx.Rollback(ctx)
 
-		var status string
-		if err := tx.QueryRow(ctx, "SELECT status FROM matches WHERE id=$1", matchID).Scan(&status); err != nil {
-			c.JSON(404, gin.H{"error": "match not found"})
+		// Проверка матча
+		var mStatus, mTitle string
+		qM := sq.Select("status", "title").
+			From("matches").
+			Where(sq.Eq{"id": matchID}).
+			PlaceholderFormat(sq.Dollar)
+
+		if err := qRowTx(ctx, tx, qM).Scan(&mStatus, &mTitle); err != nil {
+			jsonErr(c, 404, "Матч не найден")
 			return
 		}
-		if status == "finished" {
-			c.JSON(400, gin.H{"error": "match already finished"})
+		if mStatus == "finished" {
+			jsonErr(c, 400, "Матч уже завершён")
 			return
 		}
 
+		// Проверка участия
 		if req.WinnerUserID != nil {
+			sub := sq.Select("1").
+				From("match_participants").
+				Where(sq.Eq{
+					"match_id": matchID,
+					"user_id":  *req.WinnerUserID,
+				}).
+				PlaceholderFormat(sq.Dollar)
+
+			qExists := sq.Select().
+				Column(sq.Expr("EXISTS(?)", sub)).
+				PlaceholderFormat(sq.Dollar)
+
 			var ok bool
-			_ = tx.QueryRow(ctx,
-				"SELECT EXISTS(SELECT 1 FROM match_participants WHERE match_id=$1 AND user_id=$2)",
-				matchID, *req.WinnerUserID,
-			).Scan(&ok)
+			_ = qRowTx(ctx, tx, qExists).Scan(&ok)
 			if !ok {
-				c.JSON(400, gin.H{"error": "winner_user_id is not a participant of this match"})
+				jsonErr(c, 400, "Победитель не участвует в матче")
 				return
 			}
 		} else {
+			sub := sq.Select("1").
+				From("match_participants").
+				Where(sq.Eq{
+					"match_id": matchID,
+					"team_id":  *req.WinnerTeamID,
+				}).
+				PlaceholderFormat(sq.Dollar)
+
+			qExists := sq.Select().
+				Column(sq.Expr("EXISTS(?)", sub)).
+				PlaceholderFormat(sq.Dollar)
+
 			var ok bool
-			_ = tx.QueryRow(ctx,
-				"SELECT EXISTS(SELECT 1 FROM match_participants WHERE match_id=$1 AND team_id=$2)",
-				matchID, *req.WinnerTeamID,
-			).Scan(&ok)
+			_ = qRowTx(ctx, tx, qExists).Scan(&ok)
 			if !ok {
-				c.JSON(400, gin.H{"error": "winner_team_id is not a participant of this match"})
+				jsonErr(c, 400, "Победитель не участвует в матче")
 				return
 			}
 		}
 
-		_, err = tx.Exec(ctx,
-			"UPDATE matches SET status='finished', winner_user_id=$1, winner_team_id=$2 WHERE id=$3",
-			req.WinnerUserID, req.WinnerTeamID, matchID,
-		)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+		// Завершаем матч
+		updM := sq.Update("matches").
+			Set("status", "finished").
+			Set("winner_user_id", req.WinnerUserID).
+			Set("winner_team_id", req.WinnerTeamID).
+			Where(sq.Eq{"id": matchID}).
+			PlaceholderFormat(sq.Dollar)
+
+		if _, err := qExecTx(ctx, tx, updM); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 
+		// Начисление очков
 		if req.BonusPoints > 0 {
+
+			// SOLO
 			if req.WinnerUserID != nil {
-				_, err = tx.Exec(ctx,
-					"UPDATE users SET points = points + $1 WHERE id=$2",
-					req.BonusPoints, *req.WinnerUserID,
-				)
+				updU := sq.Update("users").
+					Set("points", sq.Expr("points + ?", req.BonusPoints)).
+					Where(sq.Eq{"id": *req.WinnerUserID}).
+					PlaceholderFormat(sq.Dollar)
+
+				if _, err := qExecTx(ctx, tx, updU); err != nil {
+					jsonErr(c, 500, "Ошибка сервера")
+					return
+				}
+
 			} else {
-				_, err = tx.Exec(ctx,
-					`UPDATE users u
-					 SET points = points + $1
-					 FROM team_members tm
-					 WHERE tm.team_id = $2 AND tm.user_id = u.id`,
-					req.BonusPoints, *req.WinnerTeamID,
-				)
-			}
-			if err != nil {
-				c.JSON(500, gin.H{"error": "db"})
-				return
+
+				// TEAM — получаем список участников
+				qMembers := sq.Select("user_id").
+					From("team_members").
+					Where(sq.Eq{"team_id": *req.WinnerTeamID}).
+					PlaceholderFormat(sq.Dollar)
+
+				rows, err := qQueryTx(ctx, tx, qMembers)
+				if err != nil {
+					jsonErr(c, 500, "Ошибка сервера")
+					return
+				}
+				defer rows.Close()
+
+				ids := make([]int, 0, 16)
+				for rows.Next() {
+					var id int
+					_ = rows.Scan(&id)
+					if id > 0 {
+						ids = append(ids, id)
+					}
+				}
+
+				if len(ids) > 0 {
+					updTeam := sq.Update("users").
+						Set("points", sq.Expr("points + ?", req.BonusPoints)).
+						Where(sq.Eq{"id": ids}).
+						PlaceholderFormat(sq.Dollar)
+
+					if _, err := qExecTx(ctx, tx, updTeam); err != nil {
+						jsonErr(c, 500, "Ошибка сервера")
+						return
+					}
+				}
 			}
 		}
 
 		if err := tx.Commit(ctx); err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 
-		logAction(db, &actor, "admin_set_winner", "match_id="+strconv.Itoa(matchID))
+		logAction(db, &actor, "admin_set_winner",
+			"Администратор завершил матч: "+clampRunes(mTitle, MaxReportLine))
+
 		c.JSON(200, gin.H{"ok": true})
 	}
 }
 
-// ------------------- Admin: report (text) incl. applications -------------------
+/* ===================== ADMIN: REPORT ===================== */
 
 func AdminMatchReport(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		matchID, _ := strconv.Atoi(c.Param("id"))
+		if matchID <= 0 {
+			jsonErr(c, 400, "Некорректный матч")
+			return
+		}
+
 		ctx := context.Background()
 
 		var title, mode, status string
 		var winnerUserID *int
 		var winnerTeamID *int
 
-		err := db.QueryRow(ctx,
-			"SELECT title, mode, status, winner_user_id, winner_team_id FROM matches WHERE id=$1",
-			matchID,
-		).Scan(&title, &mode, &status, &winnerUserID, &winnerTeamID)
-		if err != nil {
-			c.JSON(404, gin.H{"error": "match not found"})
+		qM := sq.Select("title", "mode", "status", "winner_user_id", "winner_team_id").
+			From("matches").
+			Where(sq.Eq{"id": matchID}).
+			PlaceholderFormat(sq.Dollar)
+
+		if err := qRow(ctx, db, qM).Scan(&title, &mode, &status, &winnerUserID, &winnerTeamID); err != nil {
+			jsonErr(c, 404, "Матч не найден")
 			return
 		}
 
-		type appRow struct {
-			id       int
-			username string
-			status   string
-			teamName *string
+		// ✅ заявки: только агрегаты (без id/username)
+		type appAgg struct {
+			Status string
+			Cnt    int
 		}
-		rowsA, err := db.Query(ctx, `
-			SELECT a.id, u.username, a.status, t.name
-			FROM applications a
-			JOIN users u ON u.id=a.user_id
-			LEFT JOIN teams t ON t.id=a.team_id
-			WHERE a.match_id=$1
-			ORDER BY a.id ASC
-		`, matchID)
+		qApps := sq.Select("status", "COUNT(*)").
+			From("applications").
+			Where(sq.Eq{"match_id": matchID}).
+			GroupBy("status").
+			OrderBy("status").
+			PlaceholderFormat(sq.Dollar)
+
+		rowsA, err := qQuery(ctx, db, qApps)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
+			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
 		defer rowsA.Close()
 
-		var apps []appRow
+		apps := []appAgg{}
 		for rowsA.Next() {
-			var r appRow
-			_ = rowsA.Scan(&r.id, &r.username, &r.status, &r.teamName)
+			var r appAgg
+			_ = rowsA.Scan(&r.Status, &r.Cnt)
 			apps = append(apps, r)
 		}
 
-		type urow struct {
-			id       int
-			username string
-			points   int
-		}
-		rowsU, err := db.Query(ctx, `
-			SELECT DISTINCT u.id, u.username, u.points
-			FROM match_participants mp
-			JOIN users u ON u.id=mp.user_id
-			WHERE mp.match_id=$1
-			ORDER BY u.username ASC`, matchID)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
-			return
-		}
-		defer rowsU.Close()
+		// ✅ участники: только количество
+		qCnt := sq.Select("COUNT(*)").
+			From("match_participants").
+			Where(sq.Eq{"match_id": matchID}).
+			PlaceholderFormat(sq.Dollar)
 
-		var users []urow
-		for rowsU.Next() {
-			var r urow
-			_ = rowsU.Scan(&r.id, &r.username, &r.points)
-			users = append(users, r)
-		}
+		var participants int
+		_ = qRow(ctx, db, qCnt).Scan(&participants)
 
-		type trow struct {
-			id      int
-			name    string
-			members []urow
-		}
-		teamMap := map[int]*trow{}
-		order := []int{}
-
-		rowsT, err := db.Query(ctx, `
-			SELECT DISTINCT t.id, t.name, u.id, u.username, u.points
-			FROM match_participants mp
-			JOIN teams t ON t.id=mp.team_id
-			JOIN users u ON u.id=mp.user_id
-			WHERE mp.match_id=$1 AND mp.team_id IS NOT NULL
-			ORDER BY t.name ASC, u.username ASC`, matchID)
-		if err != nil {
-			c.JSON(500, gin.H{"error": "db"})
-			return
-		}
-		defer rowsT.Close()
-
-		for rowsT.Next() {
-			var tid int
-			var tname string
-			var ur urow
-			_ = rowsT.Scan(&tid, &tname, &ur.id, &ur.username, &ur.points)
-			t, ok := teamMap[tid]
-			if !ok {
-				t = &trow{id: tid, name: tname}
-				teamMap[tid] = t
-				order = append(order, tid)
-			}
-			t.members = append(t.members, ur)
-		}
-
+		// ✅ победитель: без id/username (команде можно показать название)
 		winnerStr := "не определён"
-		if winnerUserID != nil {
-			var un string
-			_ = db.QueryRow(ctx, "SELECT username FROM users WHERE id=$1", *winnerUserID).Scan(&un)
-			if un != "" {
-				winnerStr = "USER: " + un + " (id=" + strconv.Itoa(*winnerUserID) + ")"
-			} else {
-				winnerStr = "USER id=" + strconv.Itoa(*winnerUserID)
-			}
-		}
 		if winnerTeamID != nil {
 			var tn string
-			_ = db.QueryRow(ctx, "SELECT name FROM teams WHERE id=$1", *winnerTeamID).Scan(&tn)
-			if tn != "" {
-				winnerStr = "TEAM: " + tn + " (id=" + strconv.Itoa(*winnerTeamID) + ")"
+			qT := sq.Select("name").
+				From("teams").
+				Where(sq.Eq{"id": *winnerTeamID}).
+				PlaceholderFormat(sq.Dollar)
+			_ = qRow(ctx, db, qT).Scan(&tn)
+			if strings.TrimSpace(tn) != "" {
+				winnerStr = "Команда: " + clampRunes(tn, MaxReportLine)
 			} else {
-				winnerStr = "TEAM id=" + strconv.Itoa(*winnerTeamID)
+				winnerStr = "Команда"
 			}
+		} else if winnerUserID != nil {
+			winnerStr = "Пользователь"
 		}
 
+		// отчёт
+		title = clampRunes(title, MaxReportLine)
 		report := ""
-		report += "ОТЧЁТ ПО МАТЧУ CTF\n"
-		report += "Матч: #" + strconv.Itoa(matchID) + " — " + title + "\n"
+		report += "ОТЧЁТ ПО МАТЧУ\n"
+		report += "Название: " + title + "\n"
 		report += "Режим: " + mode + "\n"
 		report += "Статус: " + status + "\n"
-		report += "Победитель: " + winnerStr + "\n\n"
+		report += "Победитель: " + winnerStr + "\n"
+		report += "Участников: " + strconv.Itoa(participants) + "\n\n"
 
 		report += "Заявки:\n"
 		if len(apps) == 0 {
-			report += "- нет заявок\n\n"
+			report += "- нет\n"
 		} else {
 			for _, a := range apps {
-				if a.teamName != nil {
-					report += "- #" + strconv.Itoa(a.id) + " " + a.username + " | team=" + *a.teamName + " | " + a.status + "\n"
-				} else {
-					report += "- #" + strconv.Itoa(a.id) + " " + a.username + " | " + a.status + "\n"
-				}
-			}
-			report += "\n"
-		}
-
-		if mode == "solo" {
-			report += "Участники (" + strconv.Itoa(len(users)) + "):\n"
-			for _, u := range users {
-				report += "- " + u.username + " (id=" + strconv.Itoa(u.id) + ", points=" + strconv.Itoa(u.points) + ")\n"
-			}
-		} else {
-			report += "Команды-участники (" + strconv.Itoa(len(order)) + "):\n"
-			for _, tid := range order {
-				t := teamMap[tid]
-				report += "- " + t.name + " (id=" + strconv.Itoa(t.id) + "), участников: " + strconv.Itoa(len(t.members)) + "\n"
-				for _, u := range t.members {
-					report += "  * " + u.username + " (id=" + strconv.Itoa(u.id) + ", points=" + strconv.Itoa(u.points) + ")\n"
-				}
+				report += "- " + a.Status + ": " + strconv.Itoa(a.Cnt) + "\n"
 			}
 		}
 

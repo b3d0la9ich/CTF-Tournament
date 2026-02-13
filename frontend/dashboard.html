@@ -8,7 +8,7 @@
 </head>
 
 <body class="app landing">
-<header class="appbar">
+<header class="appbar landing-header">
   <div class="landing-shell appbar-inner">
     <div class="brand">
       <div class="brand-mark">CTF</div>
@@ -18,7 +18,7 @@
       </div>
     </div>
 
-    <div class="appbar-right">
+    <div class="appbar-right landing-actions">
       <div class="pill" id="who">user • points=0</div>
       <button class="btn secondary" id="ratingBtn">Рейтинг</button>
       <button class="btn secondary" id="logoutBtn">Выход</button>
@@ -66,10 +66,6 @@
           <div class="meta-value" id="pointsLine">—</div>
         </div>
       </div>
-
-      <div class="small muted" style="margin-top:10px;">
-        Поток: заявка → approve → участник → админ вручную выбирает победителя → начисление очков (team — всем членам).
-      </div>
     </div>
   </aside>
 
@@ -84,10 +80,10 @@
           <h2>Матчи</h2>
           <div class="muted small">Доступные матчи и подача заявок</div>
         </div>
-        <div class="tabs">
-          <button class="tab active" data-status="open">open</button>
-          <button class="tab" data-status="closed">closed</button>
-          <button class="tab" data-status="finished">finished</button>
+        <div class="seg" id="userMatchTabs">
+          <button class="seg-btn active" data-status="open">open</button>
+          <button class="seg-btn" data-status="closed">closed</button>
+          <button class="seg-btn" data-status="finished">finished</button>
         </div>
       </div>
 
@@ -114,7 +110,7 @@
           <div class="grid2">
             <label class="field">
               <span class="field-label">Название команды</span>
-              <input id="teamName" placeholder="например: byteBusters">
+              <input id="teamName" maxlength="32" placeholder="например: byteBusters">
             </label>
 
             <label class="field">
@@ -164,97 +160,121 @@
       </div>
     </section>
 
-    <!-- ADMIN -->
-    <section id="view-admin" class="panel glass hidden">
-      <div class="panel-head">
-        <div>
+    <!-- ADMIN (NEW STRUCTURED) -->
+    <section id="view-admin" class="panel glass hidden adminx">
+      <div class="adminx-top">
+        <div class="adminx-title">
           <h2>Админ-панель</h2>
-          <div class="muted small">Матчи, заявки, пользователи, логи</div>
+          <div class="muted small">Управление матчами • заявками • пользователями • логами</div>
         </div>
-        <div class="tabs">
-          <button class="tab active" data-admin="matches">Матчи</button>
-          <button class="tab" data-admin="apps">Заявки</button>
-          <button class="tab" data-admin="users">Пользователи</button>
-          <button class="tab" data-admin="logs">Логи</button>
+
+        <div class="adminx-tabs seg" id="adminTabs">
+          <button class="seg-btn active" data-admin="matches">Матчи</button>
+          <button class="seg-btn" data-admin="apps">Заявки</button>
+          <button class="seg-btn" data-admin="users">Пользователи</button>
+          <button class="seg-btn" data-admin="logs">Логи</button>
         </div>
       </div>
 
-      <div class="panel-body admin-grid">
-        <!-- admin matches -->
-        <section id="admin-matches" class="card glass inner">
-          <div class="card-head">
-            <div class="card-title">Матчи CTF</div>
-            <div class="muted small">Создание / список / победитель</div>
+      <div class="adminx-body">
+        <!-- MATCHES -->
+        <section id="admin-matches" class="adminx-card">
+          <div class="adminx-cardhead">
+            <div>
+              <div class="adminx-cardtitle">Матчи</div>
+              <div class="muted small">Создание • список • победитель • отчёт</div>
+            </div>
           </div>
 
-          <div class="grid2">
-            <label class="field">
-              <span class="field-label">Название матча</span>
-              <input id="mTitle" placeholder="например: Crypto Sprint">
-            </label>
-            <label class="field">
-              <span class="field-label">Режим</span>
-              <select id="mMode">
-                <option value="solo">Solo</option>
-                <option value="team">Team</option>
-              </select>
-            </label>
+          <div class="adminx-form">
+            <div class="adminx-formgrid">
+              <label class="field">
+                <span class="field-label">Название матча</span>
+                <input id="mTitle" maxlength="60" placeholder="например: Crypto Sprint">
+              </label>
+
+              <label class="field">
+                <span class="field-label">Режим</span>
+                <select id="mMode">
+                  <option value="solo">Solo</option>
+                  <option value="team">Team</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span class="field-label">Фильтр</span>
+                <select id="mFilter">
+                  <option value="all">Все</option>
+                  <option value="open">open</option>
+                  <option value="closed">closed</option>
+                  <option value="finished">finished</option>
+                </select>
+              </label>
+
+              <div class="adminx-actions">
+                <button class="btn" id="mCreate">Создать</button>
+                <button class="btn secondary" id="mListAll">Показать</button>
+              </div>
+            </div>
           </div>
 
-          <div class="row" style="margin-top:10px;">
-            <button class="btn" id="mCreate">Создать матч</button>
-            <label class="field" style="max-width:220px;">
-              <span class="field-label">Фильтр статуса</span>
-              <select id="mFilter">
-                <option value="all">Все</option>
-                <option value="open">open</option>
-                <option value="closed">closed</option>
-                <option value="finished">finished</option>
-              </select>
-            </label>
-            <button class="btn secondary" id="mListAll">Показать</button>
+          <div class="adminx-block">
+            <div class="muted small" style="margin-bottom:10px;">Список матчей</div>
+            <div id="matchesAdminOut" class="adminx-tablewrap"></div>
           </div>
-
-          <div id="matchesAdminOut" class="stack" style="margin-top:12px;"></div>
         </section>
 
-        <!-- admin apps -->
-        <section id="admin-apps" class="card glass inner hidden">
-          <div class="card-head">
-            <div class="card-title">Заявки</div>
-            <div class="muted small">Approve / Reject</div>
+        <!-- APPS -->
+        <section id="admin-apps" class="adminx-card hidden">
+          <div class="adminx-cardhead">
+            <div>
+              <div class="adminx-cardtitle">Заявки</div>
+              <div class="muted small">Approve / Reject</div>
+            </div>
+            <button class="btn secondary" id="reloadApps">Обновить</button>
           </div>
-          <div id="appsOut" class="stack"></div>
+          <div id="appsOut" class="adminx-tablewrap"></div>
         </section>
 
-        <!-- admin users -->
-        <section id="admin-users" class="card glass inner hidden">
-          <div class="card-head">
-            <div class="card-title">Пользователи</div>
-            <div class="muted small">Очки и удаление</div>
+        <!-- USERS -->
+        <section id="admin-users" class="adminx-card hidden">
+          <div class="adminx-cardhead">
+            <div>
+              <div class="adminx-cardtitle">Пользователи</div>
+              <div class="muted small">Очки и удаление</div>
+            </div>
+            <button class="btn secondary" id="reloadUsers">Обновить</button>
           </div>
-          <div id="usersOut"></div>
+          <div id="usersOut" class="adminx-tablewrap"></div>
         </section>
 
-        <!-- admin logs -->
-        <section id="admin-logs" class="card glass inner hidden">
-          <div class="card-head">
-            <div class="card-title">Логи</div>
-            <div class="muted small">Действия в системе</div>
+        <!-- LOGS -->
+        <section id="admin-logs" class="adminx-card hidden">
+          <div class="adminx-cardhead">
+            <div>
+              <div class="adminx-cardtitle">Логи</div>
+              <div class="muted small">События (без чувствительных данных)</div>
+            </div>
+            <button class="btn secondary" id="reloadLogs">Обновить</button>
           </div>
-          <div id="logsOut"></div>
+          <div id="logsOut" class="adminx-tablewrap"></div>
         </section>
 
-        <!-- report modal -->
-        <section id="reportCard" class="card glass inner hidden">
-          <div class="card-head">
-            <div class="card-title">Отчёт</div>
-            <div class="row">
+        <!-- REPORT -->
+        <section id="reportCard" class="adminx-card hidden">
+          <div class="adminx-cardhead">
+            <div>
+              <div class="adminx-cardtitle">Отчёт по матчу</div>
+              <div class="muted small">Сводка</div>
+            </div>
+            <div class="row" style="justify-content:flex-end;">
               <button class="btn secondary" id="copyReport">Скопировать</button>
               <button class="btn secondary" id="closeReport">Закрыть</button>
             </div>
           </div>
-          <pre id="reportText" class="pre"></pre>
+          <div style="padding:14px;">
+            <pre id="reportText" class="adminx-pre"></pre>
+          </div>
         </section>
       </div>
     </section>
@@ -268,6 +288,57 @@
 <script type="module">
 import { api } from "/static/assets/api.js";
 
+/* ---------- security + helpers ---------- */
+const LIMITS = { TEAM_NAME: 32, MATCH_TITLE: 60 };
+
+function esc(s){
+  return String(s ?? "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+function clampStr(s, max){
+  s = String(s ?? "").trim();
+  if (s.length > max) s = s.slice(0, max);
+  return s;
+}
+function ruErrorMessage(msg){
+  const m = String(msg || "").toLowerCase();
+  if (!m) return "Ошибка. Попробуйте ещё раз.";
+  if (m.includes("unauthorized")) return "Нужно войти в аккаунт.";
+  if (m.includes("match not found")) return "Матч не найден.";
+  if (m.includes("match is not open")) return "Матч закрыт для заявок.";
+  if (m.includes("team_id is required")) return "Для командного матча выберите команду.";
+  if (m.includes("you are not a member")) return "Вы не состоите в выбранной команде.";
+  if (m.includes("already finished")) return "Матч уже завершён.";
+  return "Ошибка. Попробуйте ещё раз.";
+}
+function showActionRu(action){
+  const a = String(action || "");
+  const map = {
+    "seed_admin": "Создан админ-аккаунт",
+    "login": "Вход в систему",
+    "logout": "Выход из системы",
+    "register": "Регистрация",
+    "apply_match": "Подача заявки",
+    "admin_create_match": "Создание матча",
+    "admin_update_match": "Обновление матча",
+    "admin_close_match": "Закрытие матча",
+    "admin_approve_application": "Заявка одобрена",
+    "admin_reject_application": "Заявка отклонена",
+    "create_team": "Создание команды",
+    "join_team": "Вступление в команду",
+    "leave_team": "Выход из команды",
+    "admin_set_points": "Изменение очков",
+    "admin_delete_user": "Удаление пользователя",
+    "admin_set_winner": "Назначение победителя",
+  };
+  return map[a] || a || "Событие";
+}
+
+/* ---------- base ---------- */
 const errEl = document.getElementById("err");
 const who = document.getElementById("who");
 const toast = document.getElementById("toast");
@@ -275,15 +346,13 @@ const toast = document.getElementById("toast");
 const roleLine = document.getElementById("roleLine");
 const pointsLine = document.getElementById("pointsLine");
 const roleHint = document.getElementById("roleHint");
-
 const navAdmin = document.getElementById("navAdmin");
 
 const createTeamBtn = document.getElementById("createTeam");
 const teamRuleHint = document.getElementById("teamRuleHint");
 
 const views = ["matches","teams","history","rating","admin"].reduce((acc,k)=>{
-  acc[k]=document.getElementById("view-"+k);
-  return acc;
+  acc[k]=document.getElementById("view-"+k); return acc;
 },{});
 
 function err(m){ errEl.textContent = m || ""; }
@@ -293,7 +362,6 @@ function showToast(text, ok=true){
   toast.classList.toggle("bad", !ok);
   setTimeout(()=> toast.classList.add("hidden"), 2200);
 }
-
 function setView(name){
   Object.keys(views).forEach(k=>{
     if (k===name) views[k].classList.remove("hidden");
@@ -305,35 +373,35 @@ function setView(name){
 }
 
 document.getElementById("logoutBtn").onclick = async () => {
-  await api("/auth/logout","POST");
+  try { await api("/auth/logout","POST"); } catch {}
   location.href="/";
 };
-
 document.getElementById("ratingBtn").onclick = () => {
   setView("rating");
   loadRating();
 };
-
 document.querySelectorAll(".navbtn").forEach(b=>{
   b.onclick = () => {
     const v = b.dataset.view;
     setView(v);
     if (v==="matches") loadMatches(activeStatus());
-    if (v==="teams") { /* ничего авто */ }
     if (v==="history") loadHistory();
     if (v==="rating") loadRating();
-    if (v==="admin") { /* ничего авто */ }
+    if (v==="admin") {
+      // по умолчанию подгружаем матчи админки
+      loadAdminMatches();
+    }
   };
 });
 
+/* ---------- user match segmented tabs ---------- */
 function activeStatus(){
-  const a = document.querySelector("#view-matches .tab.active");
+  const a = document.querySelector("#userMatchTabs .seg-btn.active");
   return a ? a.dataset.status : "open";
 }
-
-document.querySelectorAll("#view-matches .tab").forEach(t=>{
+document.querySelectorAll("#userMatchTabs .seg-btn").forEach(t=>{
   t.onclick = () => {
-    document.querySelectorAll("#view-matches .tab").forEach(x=>x.classList.remove("active"));
+    document.querySelectorAll("#userMatchTabs .seg-btn").forEach(x=>x.classList.remove("active"));
     t.classList.add("active");
     loadMatches(t.dataset.status);
   };
@@ -347,11 +415,10 @@ async function loadMe(){
     who.textContent = `${me.username} (${me.role}) • points=${me.points}`;
     roleLine.textContent = me.role;
     pointsLine.textContent = String(me.points);
-    roleHint.textContent = me.role === "admin" ? "Полный доступ к админ-панели" : "Подача заявок и управление командами";
-
+    roleHint.textContent = me.role === "admin" ? "Полный доступ к админ-панели" : "Подача заявок и команды";
     if (me.role === "admin") navAdmin.classList.remove("hidden");
     else navAdmin.classList.add("hidden");
-  }catch(e){
+  }catch{
     location.href="/login";
   }
 }
@@ -361,7 +428,6 @@ async function getMyTeams(){
   const resTeams = await api("/my/teams");
   return Array.isArray(resTeams) ? resTeams : (Array.isArray(resTeams?.teams) ? resTeams.teams : []);
 }
-
 async function refreshTeamRuleUI(){
   try{
     const myTeams = await getMyTeams();
@@ -370,15 +436,13 @@ async function refreshTeamRuleUI(){
     if (hasTeam){
       createTeamBtn.disabled = true;
       createTeamBtn.classList.add("secondary");
-      teamRuleHint.textContent = "Вы уже состоите в команде. Чтобы вступить/создать другую — сначала выйдите из текущей.";
+      teamRuleHint.textContent = "Вы уже состоите в команде. Чтобы создать/вступить в другую — сначала выйдите.";
     } else {
       createTeamBtn.disabled = false;
       createTeamBtn.classList.remove("secondary");
       teamRuleHint.textContent = "Открытые команды можно свободно присоединять.";
     }
-  }catch{
-    // ignore
-  }
+  }catch{}
 }
 
 /* ---------- user: matches ---------- */
@@ -399,25 +463,24 @@ async function loadMatches(status){
 
     myTeams = await getMyTeams();
   }catch(e){
-    out.innerHTML = `<div class="empty bad">Ошибка загрузки: ${e.message}</div>`;
+    out.innerHTML = `<div class="empty bad">${esc(ruErrorMessage(e.message))}</div>`;
     return;
   }
 
   if (!matches.length){
-    out.innerHTML = `<div class="empty">Матчей со статусом <b>${status}</b> нет</div>`;
+    out.innerHTML = `<div class="empty">Матчей со статусом <b>${esc(status)}</b> нет</div>`;
     return;
   }
 
-  // ✅ убрали (#id) из выбора команды
-  const teamOptions = (myTeams||[]).map(t=>`<option value="${t.id}">${t.name}</option>`).join("");
+  const teamOptions = (myTeams||[]).map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join("");
 
   out.innerHTML = `<div class="stack">` + matches.map(m=>{
     const appSt = myApps[m.id] || "none";
     const applied = appSt !== "none";
-    const badge = appSt==="none" ? "заявка: —" : `заявка: ${appSt}`;
+    const badge = appSt==="none" ? "заявка: —" : `заявка: ${esc(appSt)}`;
 
     const teamPick = (m.mode==="team") ? `
-      <label class="field inline">
+      <label class="field inline" style="min-width:240px;">
         <span class="field-label">Команда</span>
         <select data-team="${m.id}">
           <option value="">Выбери команду</option>
@@ -430,10 +493,10 @@ async function loadMatches(status){
     return `
       <div class="item glass inner">
         <div class="item-head">
-          <div class="item-title">${m.title}</div>
+          <div class="item-title">${esc(m.title)}</div>
           <div class="badges">
-            <span class="badge">${m.status}</span>
-            <span class="badge">${m.mode}</span>
+            <span class="badge">${esc(m.status)}</span>
+            <span class="badge">${esc(m.mode)}</span>
             <span class="badge">${badge}</span>
           </div>
         </div>
@@ -463,7 +526,7 @@ async function loadMatches(status){
         const sel = card.querySelector(`select[data-team="${matchId}"]`);
         const teamId = sel ? sel.value : "";
         if (!teamId){
-          msg.textContent = "Выбери команду для team-матча.";
+          msg.textContent = "Выбери команду для командного матча.";
           msg.classList.add("bad");
           return;
         }
@@ -477,7 +540,7 @@ async function loadMatches(status){
         btn.classList.add("secondary");
         showToast("Заявка отправлена ✅", true);
       }catch(e){
-        msg.textContent = "Ошибка: " + e.message;
+        msg.textContent = ruErrorMessage(e.message);
         msg.classList.add("bad");
       }
     };
@@ -495,9 +558,11 @@ document.getElementById("createTeam").onclick = async () => {
     }
   }catch{}
 
-  const name = document.getElementById("teamName").value.trim();
+  let name = document.getElementById("teamName").value;
+  name = clampStr(name, LIMITS.TEAM_NAME);
+
   const is_open = document.getElementById("teamOpen").value === "true";
-  if (!name){ showToast("Введите название команды", false); return; }
+  if (!name){ showToast("Введите название команды.", false); return; }
 
   try{
     await api("/teams","POST",{name,is_open});
@@ -506,7 +571,7 @@ document.getElementById("createTeam").onclick = async () => {
     await refreshTeamRuleUI();
     await loadMyTeams();
   }catch(e){
-    showToast("Ошибка: " + e.message, false);
+    showToast(ruErrorMessage(e.message), false);
   }
 };
 
@@ -515,11 +580,7 @@ async function loadOpenTeams(){
   out.innerHTML = `<div class="skeleton">Загрузка...</div>`;
 
   try{
-    const [openRes, myRes] = await Promise.all([
-      api("/teams/open"),
-      api("/my/teams")
-    ]);
-
+    const [openRes, myRes] = await Promise.all([ api("/teams/open"), api("/my/teams") ]);
     const teams = Array.isArray(openRes) ? openRes : (Array.isArray(openRes?.teams) ? openRes.teams : []);
     const myTeams = Array.isArray(myRes) ? myRes : (Array.isArray(myRes?.teams) ? myRes.teams : []);
 
@@ -533,18 +594,16 @@ async function loadOpenTeams(){
 
     out.innerHTML = `<div class="stack">` + teams.map(t=>{
       const inThisTeam = mySet.has(t.id);
-
       const members = Array.isArray(t.members) ? t.members : [];
       const membersLine = t.is_open
-        ? (members.length ? members.map(m=>m.username).join(", ") : "пока пусто")
+        ? (members.length ? members.map(m=>esc(m.username)).join(", ") : "пока пусто")
         : "скрыт";
-
       const canJoin = (!inThisTeam && !alreadyInAnyTeam);
 
       return `
         <div class="item glass inner">
           <div class="item-head">
-            <div class="item-title">${t.name}</div>
+            <div class="item-title">${esc(t.name)}</div>
             <div class="badges">
               <span class="badge">${t.is_open ? "open" : "closed"}</span>
               ${inThisTeam ? `<span class="badge">вы участник</span>` : ``}
@@ -572,7 +631,7 @@ async function loadOpenTeams(){
           await refreshTeamRuleUI();
           await loadOpenTeams();
         }catch(e){
-          showToast("Ошибка: " + e.message, false);
+          showToast(ruErrorMessage(e.message), false);
         }
       };
     });
@@ -585,13 +644,13 @@ async function loadOpenTeams(){
           await refreshTeamRuleUI();
           await loadOpenTeams();
         }catch(e){
-          showToast("Ошибка: " + e.message, false);
+          showToast(ruErrorMessage(e.message), false);
         }
       };
     });
 
   }catch(e){
-    out.innerHTML = `<div class="empty bad">Ошибка: ${e.message}</div>`;
+    out.innerHTML = `<div class="empty bad">${esc(ruErrorMessage(e.message))}</div>`;
   }
 }
 
@@ -610,15 +669,14 @@ async function loadMyTeams(){
 
     out.innerHTML = `<div class="stack">` + teams.map(t=>{
       const members = Array.isArray(t.members) ? t.members : [];
-
       const membersLine = t.is_open
-        ? (members.length ? members.map(m=>m.username).join(", ") : "пока пусто")
+        ? (members.length ? members.map(m=>esc(m.username)).join(", ") : "пока пусто")
         : "скрыт (закрытая команда)";
 
       return `
         <div class="item glass inner">
           <div class="item-head">
-            <div class="item-title">${t.name}</div>
+            <div class="item-title">${esc(t.name)}</div>
             <div class="badges">
               <span class="badge">${t.is_open ? "open" : "closed"}</span>
               <span class="badge">ваша команда</span>
@@ -644,17 +702,17 @@ async function loadMyTeams(){
           await refreshTeamRuleUI();
           await loadMyTeams();
         }catch(e){
-          showToast("Ошибка: " + e.message, false);
+          showToast(ruErrorMessage(e.message), false);
         }
       };
     });
 
   }catch(e){
-    out.innerHTML = `<div class="empty bad">Ошибка: ${e.message}</div>`;
+    out.innerHTML = `<div class="empty bad">${esc(ruErrorMessage(e.message))}</div>`;
   }
 }
 
-/* ---------- user: history ---------- */
+/* ---------- history ---------- */
 async function loadHistory(){
   const out = document.getElementById("historyOut");
   out.innerHTML = `<div class="skeleton">Загрузка истории...</div>`;
@@ -668,16 +726,16 @@ async function loadHistory(){
     out.innerHTML = `<div class="stack">` + arr.map(m=>`
       <div class="item glass inner">
         <div class="item-head">
-          <div class="item-title">${m.title}</div>
+          <div class="item-title">${esc(m.title)}</div>
           <div class="badges">
-            <span class="badge">${m.status}</span>
-            <span class="badge">${m.mode}</span>
+            <span class="badge">${esc(m.status)}</span>
+            <span class="badge">${esc(m.mode)}</span>
           </div>
         </div>
       </div>
     `).join("") + `</div>`;
   }catch(e){
-    out.innerHTML = `<div class="empty bad">Ошибка: ${e.message}</div>`;
+    out.innerHTML = `<div class="empty bad">${esc(ruErrorMessage(e.message))}</div>`;
   }
 }
 document.getElementById("reloadHistory").onclick = loadHistory;
@@ -701,36 +759,39 @@ async function loadRating(){
             ${arr.map((u,i)=>`
               <tr>
                 <td>${i+1}</td>
-                <td><b>${u.username}</b></td>
-                <td><span class="badge">${u.role}</span></td>
-                <td><b>${u.points}</b></td>
+                <td><b>${esc(u.username)}</b></td>
+                <td><span class="badge">${esc(u.role)}</span></td>
+                <td><b>${Number(u.points ?? 0)}</b></td>
               </tr>
             `).join("")}
           </tbody>
         </table>
       </div>`;
   }catch(e){
-    out.innerHTML = `<div class="empty bad">Ошибка: ${e.message}</div>`;
+    out.innerHTML = `<div class="empty bad">${esc(ruErrorMessage(e.message))}</div>`;
   }
 }
 document.getElementById("reloadRating").onclick = loadRating;
 
-/* ---------- admin tabs ---------- */
-document.querySelectorAll("#view-admin .tab").forEach(t=>{
-  t.onclick = () => {
-    document.querySelectorAll("#view-admin .tab").forEach(x=>x.classList.remove("active"));
-    t.classList.add("active");
-    const key = t.dataset.admin;
-
-    ["matches","apps","users","logs"].forEach(k=>{
-      document.getElementById("admin-"+k).classList.toggle("hidden", k!==key);
-    });
-
-    if (key==="apps") loadAdminApps();
-    if (key==="users") loadAdminUsers();
-    if (key==="logs") loadAdminLogs();
-  };
+/* ---------- admin tabs (segmented) ---------- */
+function setAdminTab(key){
+  document.querySelectorAll("#adminTabs .seg-btn").forEach(x=>{
+    x.classList.toggle("active", x.dataset.admin===key);
+  });
+  ["matches","apps","users","logs"].forEach(k=>{
+    document.getElementById("admin-"+k).classList.toggle("hidden", k!==key);
+  });
+  if (key==="matches") loadAdminMatches();
+  if (key==="apps") loadAdminApps();
+  if (key==="users") loadAdminUsers();
+  if (key==="logs") loadAdminLogs();
+}
+document.querySelectorAll("#adminTabs .seg-btn").forEach(t=>{
+  t.onclick = ()=> setAdminTab(t.dataset.admin);
 });
+document.getElementById("reloadApps").onclick = loadAdminApps;
+document.getElementById("reloadUsers").onclick = loadAdminUsers;
+document.getElementById("reloadLogs").onclick = loadAdminLogs;
 
 /* ---------- admin: logs/users/apps ---------- */
 async function loadAdminLogs(){
@@ -741,25 +802,22 @@ async function loadAdminLogs(){
     const logs = Array.isArray(res) ? res : (Array.isArray(res?.logs) ? res.logs : []);
     if (!logs.length){ out.innerHTML = `<div class="empty">Логи пустые</div>`; return; }
 
-    // ✅ убрали ID колонку
     out.innerHTML = `
-      <div class="tablewrap">
-        <table class="table">
-          <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Details</th></tr></thead>
-          <tbody>
-            ${logs.map(l=>`
-              <tr>
-                <td>${l.created_at ?? ""}</td>
-                <td><b>${l.actor ?? ""}</b></td>
-                <td><span class="badge">${l.action ?? ""}</span></td>
-                <td class="muted">${l.details ?? ""}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      </div>`;
+      <table class="table table-compact">
+        <thead><tr><th>Время</th><th>Кто</th><th>Событие</th><th>Описание</th></tr></thead>
+        <tbody>
+          ${logs.map(l=>`
+            <tr>
+              <td class="mono">${esc(l.created_at ?? "")}</td>
+              <td><b>${esc(l.actor ?? "—")}</b></td>
+              <td><span class="badge">${esc(showActionRu(l.action))}</span></td>
+              <td class="muted td-wrap">${esc(l.details ?? "")}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>`;
   }catch(e){
-    out.innerHTML = `<div class="empty bad">Ошибка: ${e.message}</div>`;
+    out.innerHTML = `<div class="empty bad">${esc(ruErrorMessage(e.message))}</div>`;
   }
 }
 
@@ -771,45 +829,52 @@ async function loadAdminUsers(){
     const users = Array.isArray(res) ? res : (Array.isArray(res?.users) ? res.users : []);
     if (!users.length){ out.innerHTML = `<div class="empty">Пользователей нет</div>`; return; }
 
-    // ✅ убрали ID колонку (но id сохраняем в data-атрибутах)
     out.innerHTML = `
-      <div class="tablewrap">
-        <table class="table">
-          <thead><tr><th>Username</th><th>Role</th><th>Points</th><th>Действия</th></tr></thead>
-          <tbody>
-            ${users.map(u=>`
-              <tr>
-                <td><b>${u.username}</b></td>
-                <td><span class="badge">${u.role}</span></td>
-                <td><b>${u.points}</b></td>
-                <td>
-                  <div class="row">
-                    <button class="btn secondary" data-pts="${u.id}">Очки</button>
-                    <button class="btn secondary" data-del="${u.id}">Удалить</button>
-                  </div>
-                </td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      </div>`;
+      <table class="table table-compact">
+        <thead><tr><th>Username</th><th>Role</th><th>Points</th><th>Действия</th></tr></thead>
+        <tbody>
+          ${users.map(u=>`
+            <tr>
+              <td><b>${esc(u.username)}</b></td>
+              <td><span class="badge">${esc(u.role)}</span></td>
+              <td><b>${Number(u.points ?? 0)}</b></td>
+              <td>
+                <div class="actions">
+                  <button class="btn secondary btn-sm" data-pts="${u.id}">Очки</button>
+                  <button class="btn secondary btn-sm" data-del="${u.id}">Удалить</button>
+                </div>
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>`;
 
     out.querySelectorAll("button[data-pts]").forEach(b=>b.onclick=async()=>{
       const id = b.dataset.pts;
       const p = Number(prompt("Новые очки:", "0"));
       if (!Number.isFinite(p)) return;
-      try{ await api(`/admin/users/${id}/points`,"POST",{points:p}); showToast("Очки обновлены ✅", true); loadAdminUsers(); }
-      catch(e){ showToast("Ошибка: "+e.message, false); }
+      try{
+        await api(`/admin/users/${id}/points`,"POST",{points:p});
+        showToast("Очки обновлены ✅", true);
+        loadAdminUsers();
+      }catch(e){
+        showToast(ruErrorMessage(e.message), false);
+      }
     });
 
     out.querySelectorAll("button[data-del]").forEach(b=>b.onclick=async()=>{
       const id = b.dataset.del;
       if (!confirm("Удалить пользователя?")) return;
-      try{ await api(`/admin/users/${id}`,"DELETE"); showToast("Удалено ✅", true); loadAdminUsers(); }
-      catch(e){ showToast("Ошибка: "+e.message, false); }
+      try{
+        await api(`/admin/users/${id}`,"DELETE");
+        showToast("Удалено ✅", true);
+        loadAdminUsers();
+      }catch(e){
+        showToast(ruErrorMessage(e.message), false);
+      }
     });
   }catch(e){
-    out.innerHTML = `<div class="empty bad">Ошибка: ${e.message}</div>`;
+    out.innerHTML = `<div class="empty bad">${esc(ruErrorMessage(e.message))}</div>`;
   }
 }
 
@@ -822,9 +887,8 @@ async function loadAdminApps(){
     const apps = Array.isArray(res) ? res : (Array.isArray(res?.applications) ? res.applications : []);
     if (!apps.length){ out.innerHTML = `<div class="empty">Заявок нет</div>`; return; }
 
-    // ✅ решение необратимо: если не pending — кнопки disabled
-    out.innerHTML = `<div class="tablewrap">
-      <table class="table">
+    out.innerHTML = `
+      <table class="table table-compact">
         <thead>
           <tr>
             <th>Матч</th>
@@ -836,60 +900,69 @@ async function loadAdminApps(){
         </thead>
         <tbody>
           ${apps.map(a=>{
-            const team = (a.team_name && a.team_name.trim()) ? a.team_name : "—";
             const st = String(a.status || "").toLowerCase();
             const decided = (st !== "pending");
-
             return `
               <tr>
-                <td><b>${a.match_title ?? "—"}</b></td>
-                <td>${a.username ?? "—"}</td>
-                <td>${team}</td>
-                <td><span class="badge">${a.status ?? ""}</span></td>
+                <td><b>${esc(a.match_title ?? a.match ?? "—")}</b></td>
+                <td>${esc(a.username ?? a.user ?? "—")}</td>
+                <td>${esc(a.team_name ?? a.team ?? "—")}</td>
+                <td><span class="badge">${esc(a.status ?? "")}</span></td>
                 <td>
-                  <div class="row">
-                    <button class="btn secondary" data-ap="${a.id}" ${decided ? "disabled" : ""}>Approve</button>
-                    <button class="btn secondary" data-rj="${a.id}" ${decided ? "disabled" : ""}>Reject</button>
+                  <div class="actions">
+                    <button class="btn secondary btn-sm" data-ap="${a.id}" ${decided ? "disabled" : ""}>Approve</button>
+                    <button class="btn secondary btn-sm" data-rj="${a.id}" ${decided ? "disabled" : ""}>Reject</button>
                   </div>
-                  ${decided ? `<div class="small muted">Решение уже принято</div>` : ``}
                 </td>
               </tr>
             `;
           }).join("")}
         </tbody>
-      </table>
-    </div>`;
+      </table>`;
 
     out.querySelectorAll("button[data-ap]").forEach(b=>b.onclick=async()=>{
-      try{ await api(`/admin/applications/${b.dataset.ap}/approve`,"POST"); showToast("Approved ✅", true); loadAdminApps(); }
-      catch(e){ showToast("Ошибка: "+e.message, false); }
+      try{
+        await api(`/admin/applications/${b.dataset.ap}/approve`,"POST");
+        showToast("Заявка одобрена ✅", true);
+        loadAdminApps();
+      }catch(e){
+        showToast(ruErrorMessage(e.message), false);
+      }
     });
 
     out.querySelectorAll("button[data-rj]").forEach(b=>b.onclick=async()=>{
-      try{ await api(`/admin/applications/${b.dataset.rj}/reject`,"POST"); showToast("Rejected ✅", true); loadAdminApps(); }
-      catch(e){ showToast("Ошибка: "+e.message, false); }
+      try{
+        await api(`/admin/applications/${b.dataset.rj}/reject`,"POST");
+        showToast("Заявка отклонена ✅", true);
+        loadAdminApps();
+      }catch(e){
+        showToast(ruErrorMessage(e.message), false);
+      }
     });
 
   }catch(e){
-    out.innerHTML = `<div class="empty bad">Ошибка: ${e.message}</div>`;
+    out.innerHTML = `<div class="empty bad">${esc(ruErrorMessage(e.message))}</div>`;
   }
 }
 
-/* admin matches list + winner/report */
+/* ---------- admin matches as table (structured) ---------- */
 document.getElementById("mCreate").onclick = async()=>{
-  const title = document.getElementById("mTitle").value.trim();
+  let title = document.getElementById("mTitle").value;
+  title = clampStr(title, LIMITS.MATCH_TITLE);
+  document.getElementById("mTitle").value = title;
+
   const mode = document.getElementById("mMode").value;
-  if (!title){ showToast("Введите название матча", false); return; }
+  if (!title){ showToast("Введите название матча.", false); return; }
+
   try{
     await api("/admin/matches","POST",{title,mode});
     document.getElementById("mTitle").value = "";
     showToast("Матч создан ✅", true);
     await loadAdminMatches();
   }catch(e){
-    showToast("Ошибка: "+e.message, false);
+    showToast(ruErrorMessage(e.message), false);
   }
 };
-
 document.getElementById("mListAll").onclick = loadAdminMatches;
 
 async function loadAdminMatches(){
@@ -901,58 +974,68 @@ async function loadAdminMatches(){
     const matches = Array.isArray(res) ? res : (Array.isArray(res?.matches) ? res.matches : []);
     if (!matches.length){ out.innerHTML = `<div class="empty">Матчей нет</div>`; return; }
 
-    out.innerHTML = `<div class="stack">` + matches.map(m=>`
-      <div class="item glass inner">
-        <div class="item-head">
-          <div class="item-title">${m.title}</div>
-          <div class="badges">
-            <span class="badge">${m.status}</span>
-            <span class="badge">${m.mode}</span>
-          </div>
-        </div>
+    out.innerHTML = `
+      <table class="table table-compact">
+        <thead>
+          <tr>
+            <th style="width:34%;">Матч</th>
+            <th style="width:90px;">Режим</th>
+            <th style="width:110px;">Статус</th>
+            <th style="width:210px;">Победитель</th>
+            <th style="width:130px;">Очки</th>
+            <th style="width:320px;">Действия</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${matches.map(m=>`
+            <tr data-mid="${m.id}">
+              <td><b>${esc(m.title)}</b></td>
+              <td><span class="badge">${esc(m.mode)}</span></td>
+              <td><span class="badge">${esc(m.status)}</span></td>
 
-        <div class="item-actions">
-          <button class="btn secondary" data-part="${m.id}">Участники</button>
+              <td>
+                <select class="winnerSel hidden" data-wu="${m.id}">
+                  <option value="">Победитель (пользователь)</option>
+                </select>
+                <select class="winnerSel hidden" data-wt="${m.id}">
+                  <option value="">Победитель (команда)</option>
+                </select>
+                <div class="small muted hintLine">Нажми «Участники»</div>
+              </td>
 
-          <select data-winner-user="${m.id}" class="hidden">
-            <option value="">Победитель (user)</option>
-          </select>
+              <td>
+                <input class="bpInput" data-bp="${m.id}" value="0" inputmode="numeric" maxlength="7" style="width:100%;">
+              </td>
 
-          <select data-winner-team="${m.id}" class="hidden">
-            <option value="">Победитель (team)</option>
-          </select>
-
-          <label class="field inline" style="max-width:160px;">
-            <span class="field-label">Очки</span>
-            <input data-bp="${m.id}" value="0" inputmode="numeric">
-          </label>
-
-          <button class="btn" data-win="${m.id}">Назначить победителя</button>
-          <button class="btn secondary" data-close="${m.id}">Закрыть</button>
-          <button class="btn secondary" data-report="${m.id}">Отчёт</button>
-
-          <div class="small muted"></div>
-        </div>
-      </div>
-    `).join("") + `</div>`;
+              <td>
+                <div class="actions actions-wide">
+                  <button class="btn secondary btn-sm" data-part="${m.id}">Участники</button>
+                  <button class="btn btn-sm" data-win="${m.id}">Победитель</button>
+                  <button class="btn secondary btn-sm" data-close="${m.id}">Закрыть</button>
+                  <button class="btn secondary btn-sm" data-report="${m.id}">Отчёт</button>
+                </div>
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>`;
 
     out.querySelectorAll("button[data-part]").forEach(btn=>{
       btn.onclick = async ()=>{
         const id = btn.dataset.part;
-        const card = btn.closest(".item");
-        const msg = card.querySelector(".small");
-        msg.textContent = "Загружаю участников...";
-        msg.classList.remove("bad");
+        const row = out.querySelector(`tr[data-mid="${id}"]`);
+        const hint = row.querySelector(".hintLine");
+        hint.textContent = "Загружаю участников...";
 
-        const selU = card.querySelector(`select[data-winner-user="${id}"]`);
-        const selT = card.querySelector(`select[data-winner-team="${id}"]`);
+        const selU = row.querySelector(`select[data-wu="${id}"]`);
+        const selT = row.querySelector(`select[data-wt="${id}"]`);
 
         try{
           const data = await api(`/admin/matches/${id}/participants`);
-          msg.textContent = "";
+          hint.textContent = "";
 
-          selU.innerHTML = `<option value="">Победитель (user)</option>`;
-          selT.innerHTML = `<option value="">Победитель (team)</option>`;
+          selU.innerHTML = `<option value="">Победитель (пользователь)</option>`;
+          selT.innerHTML = `<option value="">Победитель (команда)</option>`;
 
           if (data.match.mode === "solo"){
             selT.classList.add("hidden");
@@ -963,22 +1046,21 @@ async function loadAdminMatches(){
               opt.textContent = `${u.username} (points=${u.points})`;
               selU.appendChild(opt);
             });
-            if (!(data.users||[]).length) msg.textContent = "Нет участников.";
+            if (!(data.users||[]).length) hint.textContent = "Нет участников.";
           }else{
             selU.classList.add("hidden");
             selT.classList.remove("hidden");
             (data.teams||[]).forEach(t=>{
-              const members = (t.members||[]).map(x=>x.username).join(", ");
               const opt = document.createElement("option");
               opt.value = String(t.id);
-              opt.textContent = `${t.name} — участников: ${(t.members||[]).length} [${members}]`;
+              opt.textContent = `${t.name} • участников: ${(t.members||[]).length}`;
               selT.appendChild(opt);
             });
-            if (!(data.teams||[]).length) msg.textContent = "Нет команд-участников.";
+            if (!(data.teams||[]).length) hint.textContent = "Нет команд-участников.";
           }
         }catch(e){
-          msg.textContent = "Ошибка: "+e.message;
-          msg.classList.add("bad");
+          hint.textContent = ruErrorMessage(e.message);
+          hint.classList.add("bad");
         }
       };
     });
@@ -986,17 +1068,23 @@ async function loadAdminMatches(){
     out.querySelectorAll("button[data-win]").forEach(btn=>{
       btn.onclick = async ()=>{
         const id = btn.dataset.win;
-        const card = btn.closest(".item");
-        const msg = card.querySelector(".small");
-        msg.textContent = "";
-        msg.classList.remove("bad");
+        const row = out.querySelector(`tr[data-mid="${id}"]`);
+        const hint = row.querySelector(".hintLine");
+        hint.classList.remove("bad");
+        hint.textContent = "";
 
-        const selU = card.querySelector(`select[data-winner-user="${id}"]`);
-        const selT = card.querySelector(`select[data-winner-team="${id}"]`);
-        const bp = Number((card.querySelector(`input[data-bp="${id}"]`).value||"0").trim());
+        const selU = row.querySelector(`select[data-wu="${id}"]`);
+        const selT = row.querySelector(`select[data-wt="${id}"]`);
+        const bp = Number((row.querySelector(`input[data-bp="${id}"]`).value||"0").trim());
 
         const winnerUserId = (!selU.classList.contains("hidden") && selU.value) ? Number(selU.value) : null;
         const winnerTeamId = (!selT.classList.contains("hidden") && selT.value) ? Number(selT.value) : null;
+
+        if (!winnerUserId && !winnerTeamId){
+          hint.textContent = "Сначала нажми «Участники» и выбери победителя.";
+          hint.classList.add("bad");
+          return;
+        }
 
         try{
           await api(`/admin/matches/${id}/winner`, "POST", {
@@ -1007,8 +1095,8 @@ async function loadAdminMatches(){
           showToast("Победитель установлен ✅", true);
           btn.disabled = true;
         }catch(e){
-          msg.textContent = "Ошибка: " + e.message + " (нажми «Участники» и выбери победителя)";
-          msg.classList.add("bad");
+          hint.textContent = ruErrorMessage(e.message);
+          hint.classList.add("bad");
         }
       };
     });
@@ -1021,7 +1109,7 @@ async function loadAdminMatches(){
           showToast("Матч закрыт ✅", true);
           loadAdminMatches();
         }catch(e){
-          showToast("Ошибка: "+e.message, false);
+          showToast(ruErrorMessage(e.message), false);
         }
       };
     });
@@ -1035,13 +1123,13 @@ async function loadAdminMatches(){
           document.getElementById("reportCard").classList.remove("hidden");
           document.getElementById("reportCard").scrollIntoView({behavior:"smooth", block:"start"});
         }catch(e){
-          showToast("Ошибка: "+e.message, false);
+          showToast(ruErrorMessage(e.message), false);
         }
       };
     });
 
   }catch(e){
-    out.innerHTML = `<div class="empty bad">Ошибка: ${e.message}</div>`;
+    out.innerHTML = `<div class="empty bad">${esc(ruErrorMessage(e.message))}</div>`;
   }
 }
 
@@ -1058,13 +1146,12 @@ document.getElementById("copyReport").onclick = async ()=>{
   }
 };
 
-// ✅ ФИКС: эти кнопки всегда реально открывают teams
+// команды кнопки
 document.getElementById("listTeams").onclick = async () => {
   setView("teams");
   await refreshTeamRuleUI();
   await loadOpenTeams();
 };
-
 document.getElementById("listMyTeams").onclick = async () => {
   setView("teams");
   await refreshTeamRuleUI();
@@ -1076,6 +1163,9 @@ await loadMe();
 await refreshTeamRuleUI();
 setView("matches");
 await loadMatches("open");
+
+// на всякий: если админ и сразу откроет админку — таб уже норм
+setAdminTab("matches");
 </script>
 </body>
 </html>

@@ -9,16 +9,16 @@
 
 <body class="landing">
   <header class="landing-header">
-    <div class="landing-shell">
+    <div class="landing-shell landing-header-inner">
       <div class="brand">
         <div class="brand-mark">CTF</div>
         <div class="brand-text">
           <div class="brand-title">CTF Tournament</div>
-          <div class="brand-sub">Учет участников • рейтинг • проведение матчей</div>
+          <div class="brand-sub">Матчи • команды • рейтинг • админка</div>
         </div>
       </div>
 
-      <nav class="landing-nav">
+      <nav class="landing-nav" aria-label="Навигация">
         <a class="nav-link" href="#features">Возможности</a>
         <a class="nav-link" href="#how">Как работает</a>
         <a class="nav-link" href="#faq">FAQ</a>
@@ -32,6 +32,7 @@
   </header>
 
   <main class="landing-main">
+    <!-- HERO -->
     <section class="hero">
       <div class="landing-shell hero-grid">
         <div class="hero-left">
@@ -41,12 +42,13 @@
           </div>
 
           <h1 class="hero-title">
-            Управляй матчами CTF, командами и рейтингом — <span class="accent">в одном месте</span>
+            Управляй матчами CTF, командами и рейтингом —
+            <span class="accent">в одном месте</span>
           </h1>
 
           <p class="hero-desc">
-            Создавай CTF-матчи (solo/team), принимай заявки участников, веди историю, назначай победителя вручную
-            и автоматически начисляй очки всем членам команды.
+            Создавай матчи, принимай заявки, назначай победителя вручную и начисляй очки
+            участнику или всей команде. Всё прозрачно: логи действий и общий рейтинг.
           </p>
 
           <div class="hero-cta">
@@ -54,68 +56,80 @@
             <a class="btn secondary" href="/login">У меня уже есть аккаунт</a>
           </div>
 
-          <div class="hero-stats">
-            <div class="stat">
-              <div class="stat-num">Solo / Team</div>
-              <div class="stat-label">форматы матчей</div>
+          <div class="hero-kpis">
+            <div class="kpi glass">
+              <div class="kpi-title">Командные / Одиночные</div>
+              <div class="kpi-sub muted small">форматы матчей</div>
             </div>
-            <div class="stat">
-              <div class="stat-num">Approve</div>
-              <div class="stat-label">модерация заявок</div>
+            <div class="kpi glass">
+              <div class="kpi-title">Заявки</div>
+              <div class="kpi-sub muted small">Обработка на вступление</div>
             </div>
-            <div class="stat">
-              <div class="stat-num">Rating</div>
-              <div class="stat-label">общий рейтинг</div>
+            <div class="kpi glass">
+              <div class="kpi-title">Рейтинг</div>
+              <div class="kpi-sub muted small">по очкам</div>
             </div>
           </div>
         </div>
 
         <div class="hero-right">
-          <div class="mock glass">
-            <div class="mock-top">
-              <div class="mock-dots">
-                <span></span><span></span><span></span>
-              </div>
-              <div class="mock-title">Dashboard Preview</div>
+          <div class="hero-card glass">
+            <div class="hero-card-top">
+              <div class="mock-dots"><span></span><span></span><span></span></div>
+              <div class="hero-card-title muted small">Пример интерфейса</div>
             </div>
 
-            <div class="mock-body">
-              <div class="mock-card">
-                <div class="mock-card-title">Матч: Crypto Sprint</div>
-                <div class="mock-row">
-                  <span class="badge">open</span>
-                  <span class="badge">team</span>
-                  <span class="badge">заявка: pending</span>
+            <div class="hero-card-body">
+              <div class="mini glass">
+                <div class="mini-head">
+                  <div class="mini-title">Матч: Crypto Sprint</div>
+                  <div class="mini-badges">
+                    <span class="badge">open</span>
+                    <span class="badge">team</span>
+                  </div>
+                </div>
+                <div class="mini-row muted small">
+                  Заявка: <b>Отправлена</b> • Участники после approve
                 </div>
               </div>
 
-              <div class="mock-card">
-                <div class="mock-card-title">Команда: byteBusters</div>
-                <div class="mock-row">
-                  <span class="badge">open group</span>
-                  <span class="badge">members: 3</span>
+              <div class="mini glass">
+                <div class="mini-head">
+                  <div class="mini-title">Команда: byteBusters</div>
+                  <div class="mini-badges">
+                    <span class="badge">Открытый</span>
+                    <span class="badge">3 участника</span>
+                  </div>
+                </div>
+                <div class="mini-row muted small">
+                  Вступление в открытые команды • участие в team-матчах
                 </div>
               </div>
 
-              <div class="mock-card">
-                <div class="mock-card-title">Рейтинг</div>
-                <div class="mock-row">
-                  <span class="badge">#1 admin</span>
-                  <span class="badge">points: 120</span>
+              <div class="mini glass">
+                <div class="mini-head">
+                  <div class="mini-title">Рейтинг</div>
+                  <div class="mini-badges">
+                    <span class="badge">Очки</span>
+                  </div>
+                </div>
+                <div class="mini-row muted small">
+                  Сортировка по очкам • история участия
                 </div>
               </div>
 
-              <div class="mock-footer small muted">
-                * победителя назначает админ вручную, очки начисляются участнику или всей команде
+              <div class="muted small" style="margin-top:10px;">
+                * победителя назначает админ вручную, в team-матчах очки получают все участники команды
               </div>
             </div>
           </div>
 
-          <div class="glow"></div>
+          <div class="hero-glow"></div>
         </div>
       </div>
     </section>
 
+    <!-- FEATURES -->
     <section id="features" class="section">
       <div class="landing-shell">
         <div class="section-head">
@@ -126,88 +140,89 @@
         <div class="cards">
           <article class="feature glass">
             <div class="feature-ico">🎯</div>
-            <h3>Матчи CTF</h3>
-            <p class="muted">Создание, редактирование, закрытие и завершение матчей (open/closed/finished).</p>
+            <h3>Матчи</h3>
+            <p class="muted">Создание, закрытие, завершение, назначение победителя и отчёт.</p>
           </article>
 
           <article class="feature glass">
             <div class="feature-ico">🧾</div>
-            <h3>Заявки участников</h3>
-            <p class="muted">Подача заявок пользователями и ручной approve/reject со стороны админа.</p>
+            <h3>Заявки</h3>
+            <p class="muted">Подача заявок и ручная модерация со стороны администратора.</p>
           </article>
 
           <article class="feature glass">
             <div class="feature-ico">👥</div>
             <h3>Команды</h3>
-            <p class="muted">Создание групп, вступление в открытые команды, участие в team-матчах.</p>
+            <p class="muted">Открытые/закрытые команды, вступление, выход, участие в team-матчах.</p>
           </article>
 
           <article class="feature glass">
             <div class="feature-ico">🏆</div>
-            <h3>Победитель вручную</h3>
-            <p class="muted">Админ назначает победителя, очки начисляются игроку или всей команде.</p>
+            <h3>Начисление очков</h3>
+            <p class="muted">Очки победителю или всей команде — автоматически всем участникам.</p>
           </article>
 
           <article class="feature glass">
             <div class="feature-ico">📈</div>
             <h3>Рейтинг</h3>
-            <p class="muted">Единый рейтинг по баллам, сортировка по очкам.</p>
+            <p class="muted">Топ пользователей по очкам, обновление в реальном времени.</p>
           </article>
 
           <article class="feature glass">
             <div class="feature-ico">🧰</div>
             <h3>Логи</h3>
-            <p class="muted">Прозрачность действий: вход, регистрация, заявки, админские операции.</p>
+            <p class="muted">Прозрачность: вход, заявки, операции админа — без лишних данных.</p>
           </article>
         </div>
       </div>
     </section>
 
+    <!-- HOW -->
     <section id="how" class="section">
-      <div class="landing-shell how">
+      <div class="landing-shell">
         <div class="section-head">
           <h2>Как это работает</h2>
-          <p class="muted">Простой поток от заявки до начисления очков.</p>
+          <p class="muted">От заявки до очков — в 4 шага.</p>
         </div>
 
         <div class="steps">
           <div class="step glass">
             <div class="step-num">1</div>
             <div>
-              <div class="step-title">Пользователь подает заявку</div>
-              <div class="muted small">На solo или team матч (для team выбирает свою группу).</div>
+              <div class="step-title">Подача заявки</div>
+              <div class="muted small">На одиночные или командные матчи.</div>
             </div>
           </div>
 
           <div class="step glass">
             <div class="step-num">2</div>
             <div>
-              <div class="step-title">Админ модераторит заявку</div>
-              <div class="muted small">Approve → участник попадает в match_participants.</div>
+              <div class="step-title">Обработка заявки</div>
+              <div class="muted small">Админ решает — и участник попадает в список.</div>
             </div>
           </div>
 
           <div class="step glass">
             <div class="step-num">3</div>
             <div>
-              <div class="step-title">Админ выбирает победителя</div>
-              <div class="muted small">Вручную: user или team. Очки начисляются всем членам команды.</div>
+              <div class="step-title">Победитель</div>
+              <div class="muted small">Выбор игрока или команды + бонусные очки.</div>
             </div>
           </div>
 
           <div class="step glass">
             <div class="step-num">4</div>
             <div>
-              <div class="step-title">Обновляется рейтинг</div>
-              <div class="muted small">Очки суммируются, можно смотреть общий рейтинг и историю участия.</div>
+              <div class="step-title">Рейтинг и история</div>
+              <div class="muted small">Очки суммируются — всё видно в рейтинге и истории.</div>
             </div>
           </div>
         </div>
 
         <div class="how-cta glass">
           <div>
-            <div class="how-title">Готов начать?</div>
-            <div class="muted small">Создай аккаунт или войди, если уже регистрировался.</div>
+            <div class="how-title">Готов стартовать?</div>
+            <div class="muted small">Регистрация — 30 секунд.</div>
           </div>
           <div class="row">
             <a class="btn" href="/register">Регистрация</a>
@@ -217,18 +232,19 @@
       </div>
     </section>
 
+    <!-- FAQ -->
     <section id="faq" class="section">
       <div class="landing-shell">
         <div class="section-head">
           <h2>FAQ</h2>
-          <p class="muted">Коротко про роли и логику.</p>
+          <p class="muted">Коротко про роли и механику.</p>
         </div>
 
         <div class="faq">
           <details class="glass">
             <summary>Что может обычный пользователь?</summary>
             <div class="muted">
-              Смотреть матчи, подавать заявки, создавать и управлять командами, вступать в открытые группы,
+              Смотреть матчи, подавать заявки, создавать/управлять командами, вступать в открытые команды,
               смотреть историю участия и рейтинг.
             </div>
           </details>
@@ -236,24 +252,21 @@
           <details class="glass">
             <summary>Что может админ?</summary>
             <div class="muted">
-              Управлять матчами и пользователями, просматривать логи, одобрять/отклонять заявки,
-              назначать победителя вручную и начислять очки.
+              Управлять матчами и пользователями, одобрять/отклонять заявки, просматривать логи,
+              назначать победителя и начислять очки.
             </div>
           </details>
 
           <details class="glass">
-            <summary>Как начисляются очки в team-матче?</summary>
+            <summary>Как начисляются очки в командных матчах?</summary>
             <div class="muted">
-              Админ выбирает команду-победителя, и очки добавляются всем участникам этой команды.
+              Админ выбирает команду-победителя, и очки добавляются всем её участникам.
             </div>
           </details>
         </div>
-
-        <footer class="landing-footer muted small">
-          © CTF Tournament • Go + PostgreSQL + Docker • Frontend: HTML/CSS/JS
-        </footer>
       </div>
     </section>
+
   </main>
 
   <div class="noise"></div>
