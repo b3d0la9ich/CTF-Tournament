@@ -28,7 +28,7 @@ func jsonErr(c *gin.Context, code int, msg string) {
 func normStatus(s string) string {
 	s = clampRunes(strings.ToLower(s), MaxStatus)
 	switch s {
-	case "open", "closed", "finished", "all", "":
+	case "open", "finished", "all", "":
 		return s
 	default:
 		return "invalid"
@@ -115,7 +115,7 @@ func Rating(db *pgxpool.Pool) gin.HandlerFunc {
 
 /* ===================== MATCHES (USER) ===================== */
 
-// GET /api/matches?status=open|closed|finished|all
+// GET /api/matches?status=open|finished|all
 func ListMatches(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		status := normStatus(c.Query("status"))
@@ -209,8 +209,10 @@ func ApplyToMatch(db *pgxpool.Pool) gin.HandlerFunc {
 			jsonErr(c, 404, "Матч не найден")
 			return
 		}
+
+		// ✅ заявки только на open
 		if status != "open" {
-			jsonErr(c, 400, "Матч закрыт для заявок")
+			jsonErr(c, 400, "Нельзя подать заявку на завершённый матч")
 			return
 		}
 
@@ -250,9 +252,7 @@ func ApplyToMatch(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		// ✅ лог без ID и без username
 		logAction(db, &userID, "apply_match", "Пользователь подал заявку на матч: "+clampRunes(title, MaxReportLine))
-
 		c.JSON(200, gin.H{"ok": true})
 	}
 }
@@ -516,14 +516,37 @@ func JoinTeam(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
+			return
+		}
+		defer tx.Rollback(ctx)
+
+		var isOpen bool
 		qTeam := sq.Select("is_open").
 			From("teams").
 			Where(sq.Eq{"id": teamID}).
 			PlaceholderFormat(sq.Dollar)
 
-		var isOpen bool
-		if err := qRow(ctx, db, qTeam).Scan(&isOpen); err != nil || !isOpen {
+		if err := qRowTx(ctx, tx, qTeam).Scan(&isOpen); err != nil || !isOpen {
 			jsonErr(c, 403, "Команда недоступна")
+			return
+		}
+
+		qCount := sq.Select("COUNT(*)").
+			From("team_members").
+			Where(sq.Eq{"team_id": teamID}).
+			PlaceholderFormat(sq.Dollar)
+
+		var count int
+		if err := qRowTx(ctx, tx, qCount).Scan(&count); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
+			return
+		}
+
+		if count >= MaxTeamMembers {
+			jsonErr(c, 400, "В команде уже максимальное количество участников (5)")
 			return
 		}
 
@@ -533,7 +556,12 @@ func JoinTeam(db *pgxpool.Pool) gin.HandlerFunc {
 			Suffix("ON CONFLICT DO NOTHING").
 			PlaceholderFormat(sq.Dollar)
 
-		if _, err := qExec(ctx, db, ins); err != nil {
+		if _, err := qExecTx(ctx, tx, ins); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
+			return
+		}
+
+		if err := tx.Commit(ctx); err != nil {
 			jsonErr(c, 500, "Ошибка сервера")
 			return
 		}
@@ -574,7 +602,6 @@ func AdminLogs(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := context.Background()
 
-		// ✅ без ID и без username
 		q := sq.Select(
 			"to_char(l.created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at",
 			"CASE WHEN u.role='admin' THEN 'Администратор' ELSE 'Пользователь' END AS actor",
@@ -747,6 +774,7 @@ func AdminCreateMatch(db *pgxpool.Pool) gin.HandlerFunc {
 	}
 }
 
+// ✅ обновляем только title/mode и только пока матч open
 func AdminUpdateMatch(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		actor := uid(c)
@@ -757,9 +785,8 @@ func AdminUpdateMatch(db *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		var req struct {
-			Title  string `json:"title"`
-			Mode   string `json:"mode"`
-			Status string `json:"status"`
+			Title string `json:"title"`
+			Mode  string `json:"mode"`
 		}
 		if err := c.BindJSON(&req); err != nil {
 			jsonErr(c, 400, "Некорректные данные")
@@ -768,18 +795,27 @@ func AdminUpdateMatch(db *pgxpool.Pool) gin.HandlerFunc {
 
 		req.Title = clampRunes(req.Title, MaxMatchTitle)
 		req.Mode = normMode(req.Mode)
-		req.Status = normStatus(req.Status)
-		if req.Title == "" || req.Mode == "invalid" || req.Status == "invalid" || req.Status == "all" || req.Status == "" {
+		if req.Title == "" || req.Mode == "invalid" {
 			jsonErr(c, 400, "Некорректные данные")
 			return
 		}
 
 		ctx := context.Background()
 
+		var st string
+		qSt := sq.Select("status").From("matches").Where(sq.Eq{"id": id}).PlaceholderFormat(sq.Dollar)
+		if err := qRow(ctx, db, qSt).Scan(&st); err != nil {
+			jsonErr(c, 404, "Матч не найден")
+			return
+		}
+		if st != "open" {
+			jsonErr(c, 400, "Нельзя изменять завершённый матч")
+			return
+		}
+
 		upd := sq.Update("matches").
 			Set("title", req.Title).
 			Set("mode", req.Mode).
-			Set("status", req.Status).
 			Where(sq.Eq{"id": id}).
 			PlaceholderFormat(sq.Dollar)
 
@@ -818,6 +854,7 @@ func AdminDeleteMatch(db *pgxpool.Pool) gin.HandlerFunc {
 	}
 }
 
+// GET /api/admin/matches?status=open|finished|all
 func AdminListMatches(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		status := normStatus(c.Query("status"))
@@ -855,47 +892,6 @@ func AdminListMatches(db *pgxpool.Pool) gin.HandlerFunc {
 	}
 }
 
-func AdminCloseMatch(db *pgxpool.Pool) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		actor := uid(c)
-		matchID, _ := strconv.Atoi(c.Param("id"))
-		if matchID <= 0 {
-			jsonErr(c, 400, "Некорректный матч")
-			return
-		}
-
-		ctx := context.Background()
-
-		qSt := sq.Select("status", "title").
-			From("matches").
-			Where(sq.Eq{"id": matchID}).
-			PlaceholderFormat(sq.Dollar)
-
-		var status, title string
-		if err := qRow(ctx, db, qSt).Scan(&status, &title); err != nil {
-			jsonErr(c, 404, "Матч не найден")
-			return
-		}
-		if status == "finished" {
-			jsonErr(c, 400, "Матч уже завершён")
-			return
-		}
-
-		upd := sq.Update("matches").
-			Set("status", "closed").
-			Where(sq.Eq{"id": matchID}).
-			PlaceholderFormat(sq.Dollar)
-
-		if _, err := qExec(ctx, db, upd); err != nil {
-			jsonErr(c, 500, "Ошибка сервера")
-			return
-		}
-
-		logAction(db, &actor, "admin_close_match", "Администратор закрыл матч: "+clampRunes(title, MaxReportLine))
-		c.JSON(200, gin.H{"ok": true})
-	}
-}
-
 /* ===================== ADMIN: APPLICATIONS ===================== */
 
 func AdminListApplications(db *pgxpool.Pool) gin.HandlerFunc {
@@ -924,11 +920,11 @@ func AdminListApplications(db *pgxpool.Pool) gin.HandlerFunc {
 		defer rows.Close()
 
 		type outRow struct {
-			ID        int64  `json:"id"`
-			Match     string `json:"match"`
-			User      string `json:"user"`
-			Team      string `json:"team"`
-			Status    string `json:"status"`
+			ID     int64  `json:"id"`
+			Match  string `json:"match"`
+			User   string `json:"user"`
+			Team   string `json:"team"`
+			Status string `json:"status"`
 		}
 
 		var out []outRow
@@ -941,6 +937,7 @@ func AdminListApplications(db *pgxpool.Pool) gin.HandlerFunc {
 	}
 }
 
+// ✅ approve только если матч open
 func AdminApproveApplication(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		actor := uid(c)
@@ -954,18 +951,24 @@ func AdminApproveApplication(db *pgxpool.Pool) gin.HandlerFunc {
 
 		var matchID, userID int
 		var teamID *int
-		var st string
-		qApp := sq.Select("match_id", "user_id", "team_id", "status").
-			From("applications").
-			Where(sq.Eq{"id": appID}).
+		var st, mStatus string
+
+		qApp := sq.Select("a.match_id", "a.user_id", "a.team_id", "a.status", "m.status").
+			From("applications a").
+			Join("matches m ON m.id = a.match_id").
+			Where(sq.Eq{"a.id": appID}).
 			PlaceholderFormat(sq.Dollar)
 
-		if err := qRow(ctx, db, qApp).Scan(&matchID, &userID, &teamID, &st); err != nil {
+		if err := qRow(ctx, db, qApp).Scan(&matchID, &userID, &teamID, &st, &mStatus); err != nil {
 			jsonErr(c, 404, "Заявка не найдена")
 			return
 		}
 		if strings.ToLower(st) != "pending" {
 			jsonErr(c, 400, "Решение уже принято")
+			return
+		}
+		if mStatus != "open" {
+			jsonErr(c, 400, "Матч уже завершён")
 			return
 		}
 
@@ -998,6 +1001,7 @@ func AdminApproveApplication(db *pgxpool.Pool) gin.HandlerFunc {
 	}
 }
 
+// ✅ reject только если матч open
 func AdminRejectApplication(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		actor := uid(c)
@@ -1011,18 +1015,24 @@ func AdminRejectApplication(db *pgxpool.Pool) gin.HandlerFunc {
 
 		var matchID, userID int
 		var teamID *int
-		var st string
-		qApp := sq.Select("match_id", "user_id", "team_id", "status").
-			From("applications").
-			Where(sq.Eq{"id": appID}).
+		var st, mStatus string
+
+		qApp := sq.Select("a.match_id", "a.user_id", "a.team_id", "a.status", "m.status").
+			From("applications a").
+			Join("matches m ON m.id = a.match_id").
+			Where(sq.Eq{"a.id": appID}).
 			PlaceholderFormat(sq.Dollar)
 
-		if err := qRow(ctx, db, qApp).Scan(&matchID, &userID, &teamID, &st); err != nil {
+		if err := qRow(ctx, db, qApp).Scan(&matchID, &userID, &teamID, &st, &mStatus); err != nil {
 			jsonErr(c, 404, "Заявка не найдена")
 			return
 		}
 		if strings.ToLower(st) != "pending" {
 			jsonErr(c, 400, "Решение уже принято")
+			return
+		}
+		if mStatus != "open" {
+			jsonErr(c, 400, "Матч уже завершён")
 			return
 		}
 
@@ -1063,6 +1073,7 @@ func AdminRejectApplication(db *pgxpool.Pool) gin.HandlerFunc {
 
 /* ===================== ADMIN: PARTICIPANTS ===================== */
 
+// ✅ только для open (чтобы выбрать победителя). Для finished — только отчёт.
 func AdminMatchParticipants(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		matchID, _ := strconv.Atoi(c.Param("id"))
@@ -1072,15 +1083,18 @@ func AdminMatchParticipants(db *pgxpool.Pool) gin.HandlerFunc {
 		}
 		ctx := context.Background()
 
-		// 1) режим матча (через squirrel)
-		var mode string
-		qMode := sq.Select("mode").
+		var mode, status string
+		qMode := sq.Select("mode", "status").
 			From("matches").
 			Where(sq.Eq{"id": matchID}).
 			PlaceholderFormat(sq.Dollar)
 
-		if err := qRow(ctx, db, qMode).Scan(&mode); err != nil {
+		if err := qRow(ctx, db, qMode).Scan(&mode, &status); err != nil {
 			jsonErr(c, 404, "Матч не найден")
+			return
+		}
+		if status != "open" {
+			jsonErr(c, 400, "Матч завершён. Доступен только отчёт.")
 			return
 		}
 
@@ -1091,7 +1105,6 @@ func AdminMatchParticipants(db *pgxpool.Pool) gin.HandlerFunc {
 			},
 		}
 
-		// 2) SOLO: users
 		if mode == "solo" {
 			type U struct {
 				ID       int    `json:"id"`
@@ -1125,7 +1138,6 @@ func AdminMatchParticipants(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		// 3) TEAM: teams with members
 		type U struct {
 			ID       int    `json:"id"`
 			Username string `json:"username"`
@@ -1207,7 +1219,6 @@ func AdminSetWinner(db *pgxpool.Pool) gin.HandlerFunc {
 			jsonErr(c, 400, "Выберите победителя")
 			return
 		}
-
 		if req.BonusPoints < 0 || req.BonusPoints > 1_000_000 {
 			jsonErr(c, 400, "Некорректные очки")
 			return
@@ -1221,7 +1232,6 @@ func AdminSetWinner(db *pgxpool.Pool) gin.HandlerFunc {
 		}
 		defer tx.Rollback(ctx)
 
-		// Проверка матча
 		var mStatus, mTitle string
 		qM := sq.Select("status", "title").
 			From("matches").
@@ -1237,14 +1247,11 @@ func AdminSetWinner(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		// Проверка участия
+		// проверка участия
 		if req.WinnerUserID != nil {
 			sub := sq.Select("1").
 				From("match_participants").
-				Where(sq.Eq{
-					"match_id": matchID,
-					"user_id":  *req.WinnerUserID,
-				}).
+				Where(sq.Eq{"match_id": matchID, "user_id": *req.WinnerUserID}).
 				PlaceholderFormat(sq.Dollar)
 
 			qExists := sq.Select().
@@ -1260,10 +1267,7 @@ func AdminSetWinner(db *pgxpool.Pool) gin.HandlerFunc {
 		} else {
 			sub := sq.Select("1").
 				From("match_participants").
-				Where(sq.Eq{
-					"match_id": matchID,
-					"team_id":  *req.WinnerTeamID,
-				}).
+				Where(sq.Eq{"match_id": matchID, "team_id": *req.WinnerTeamID}).
 				PlaceholderFormat(sq.Dollar)
 
 			qExists := sq.Select().
@@ -1278,7 +1282,6 @@ func AdminSetWinner(db *pgxpool.Pool) gin.HandlerFunc {
 			}
 		}
 
-		// Завершаем матч
 		updM := sq.Update("matches").
 			Set("status", "finished").
 			Set("winner_user_id", req.WinnerUserID).
@@ -1291,10 +1294,8 @@ func AdminSetWinner(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		// Начисление очков
+		// начисление очков
 		if req.BonusPoints > 0 {
-
-			// SOLO
 			if req.WinnerUserID != nil {
 				updU := sq.Update("users").
 					Set("points", sq.Expr("points + ?", req.BonusPoints)).
@@ -1305,10 +1306,7 @@ func AdminSetWinner(db *pgxpool.Pool) gin.HandlerFunc {
 					jsonErr(c, 500, "Ошибка сервера")
 					return
 				}
-
 			} else {
-
-				// TEAM — получаем список участников
 				qMembers := sq.Select("user_id").
 					From("team_members").
 					Where(sq.Eq{"team_id": *req.WinnerTeamID}).
@@ -1349,9 +1347,7 @@ func AdminSetWinner(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		logAction(db, &actor, "admin_set_winner",
-			"Администратор завершил матч: "+clampRunes(mTitle, MaxReportLine))
-
+		logAction(db, &actor, "admin_set_winner", "Администратор завершил матч: "+clampRunes(mTitle, MaxReportLine))
 		c.JSON(200, gin.H{"ok": true})
 	}
 }
@@ -1364,6 +1360,43 @@ func AdminMatchReport(db *pgxpool.Pool) gin.HandlerFunc {
 		if matchID <= 0 {
 			jsonErr(c, 400, "Некорректный матч")
 			return
+		}
+
+		// локальные маппинги для отчёта
+		ruMatchStatus := func(s string) string {
+			switch strings.ToLower(strings.TrimSpace(s)) {
+			case "open":
+				return "Открытый"
+			case "finished":
+				return "Завершён"
+			case "closed":
+				// если у тебя ещё где-то осталось closed — покажем по-русски
+				return "Закрыт"
+			default:
+				return s
+			}
+		}
+		ruMode := func(s string) string {
+			switch strings.ToLower(strings.TrimSpace(s)) {
+			case "solo":
+				return "Solo"
+			case "team":
+				return "Team"
+			default:
+				return s
+			}
+		}
+		ruAppStatus := func(s string) string {
+			switch strings.ToLower(strings.TrimSpace(s)) {
+			case "pending":
+				return "Отправлена"
+			case "approved":
+				return "Одобрена"
+			case "rejected":
+				return "Отклонена"
+			default:
+				return s
+			}
 		}
 
 		ctx := context.Background()
@@ -1382,7 +1415,7 @@ func AdminMatchReport(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		// ✅ заявки: только агрегаты (без id/username)
+		// заявки: агрегаты (без id)
 		type appAgg struct {
 			Status string
 			Cnt    int
@@ -1408,7 +1441,7 @@ func AdminMatchReport(db *pgxpool.Pool) gin.HandlerFunc {
 			apps = append(apps, r)
 		}
 
-		// ✅ участники: только количество
+		// участники: количество
 		qCnt := sq.Select("COUNT(*)").
 			From("match_participants").
 			Where(sq.Eq{"match_id": matchID}).
@@ -1417,31 +1450,43 @@ func AdminMatchReport(db *pgxpool.Pool) gin.HandlerFunc {
 		var participants int
 		_ = qRow(ctx, db, qCnt).Scan(&participants)
 
-		// ✅ победитель: без id/username (команде можно показать название)
+		// победитель
 		winnerStr := "не определён"
+
 		if winnerTeamID != nil {
 			var tn string
 			qT := sq.Select("name").
 				From("teams").
 				Where(sq.Eq{"id": *winnerTeamID}).
 				PlaceholderFormat(sq.Dollar)
-			_ = qRow(ctx, db, qT).Scan(&tn)
-			if strings.TrimSpace(tn) != "" {
+
+			if err := qRow(ctx, db, qT).Scan(&tn); err == nil && strings.TrimSpace(tn) != "" {
 				winnerStr = "Команда: " + clampRunes(tn, MaxReportLine)
 			} else {
 				winnerStr = "Команда"
 			}
 		} else if winnerUserID != nil {
-			winnerStr = "Пользователь"
+			var un string
+			qU := sq.Select("username").
+				From("users").
+				Where(sq.Eq{"id": *winnerUserID}).
+				PlaceholderFormat(sq.Dollar)
+
+			if err := qRow(ctx, db, qU).Scan(&un); err == nil && strings.TrimSpace(un) != "" {
+				winnerStr = "Пользователь: " + clampRunes(un, MaxReportLine)
+			} else {
+				winnerStr = "Пользователь"
+			}
 		}
 
 		// отчёт
 		title = clampRunes(title, MaxReportLine)
+
 		report := ""
 		report += "ОТЧЁТ ПО МАТЧУ\n"
 		report += "Название: " + title + "\n"
-		report += "Режим: " + mode + "\n"
-		report += "Статус: " + status + "\n"
+		report += "Режим: " + ruMode(mode) + "\n"
+		report += "Статус: " + ruMatchStatus(status) + "\n"
 		report += "Победитель: " + winnerStr + "\n"
 		report += "Участников: " + strconv.Itoa(participants) + "\n\n"
 
@@ -1450,7 +1495,7 @@ func AdminMatchReport(db *pgxpool.Pool) gin.HandlerFunc {
 			report += "- нет\n"
 		} else {
 			for _, a := range apps {
-				report += "- " + a.Status + ": " + strconv.Itoa(a.Cnt) + "\n"
+				report += "- " + ruAppStatus(a.Status) + ": " + strconv.Itoa(a.Cnt) + "\n"
 			}
 		}
 

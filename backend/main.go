@@ -42,16 +42,15 @@ func main() {
 		api.POST("/auth/logout", internal.Logout())
 		api.GET("/me", internal.Auth(secret), internal.Me(db))
 
-		// rating
 		api.GET("/rating", internal.Auth(secret), internal.Rating(db))
 
-		// user matches/applications/history
-		api.GET("/matches", internal.Auth(secret), internal.ListMatches(db)) // ?status=open|closed|finished|all
+		// matches/applications/history (status: open|finished|all)
+		api.GET("/matches", internal.Auth(secret), internal.ListMatches(db))
 		api.POST("/matches/:id/apply", internal.Auth(secret), internal.ApplyToMatch(db))
 		api.GET("/my/applications", internal.Auth(secret), internal.MyApplications(db))
 		api.GET("/history", internal.Auth(secret), internal.MyHistory(db))
 
-		// teams/groups
+		// teams
 		api.POST("/teams", internal.Auth(secret), internal.CreateTeam(db))
 		api.GET("/teams/open", internal.Auth(secret), internal.ListOpenTeams(db))
 		api.GET("/my/teams", internal.Auth(secret), internal.MyTeams(db))
@@ -74,12 +73,10 @@ func main() {
 			admin.POST("/applications/:id/approve", internal.AdminApproveApplication(db))
 			admin.POST("/applications/:id/reject", internal.AdminRejectApplication(db))
 
-			admin.POST("/matches/:id/winner", internal.AdminSetWinner(db)) // manual winner
-			admin.POST("/matches/:id/close", internal.AdminCloseMatch(db)) // close without winner
-
-			admin.GET("/matches", internal.AdminListMatches(db))                 // list all matches, filter by ?status=
-			admin.GET("/matches/:id/participants", internal.AdminMatchParticipants(db)) // for dropdowns
-			admin.GET("/matches/:id/report", internal.AdminMatchReport(db))      // text report
+			admin.POST("/matches/:id/winner", internal.AdminSetWinner(db)) // finish match
+			admin.GET("/matches", internal.AdminListMatches(db))           // ?status=open|finished|all
+			admin.GET("/matches/:id/participants", internal.AdminMatchParticipants(db)) // only for open
+			admin.GET("/matches/:id/report", internal.AdminMatchReport(db))
 		}
 	}
 

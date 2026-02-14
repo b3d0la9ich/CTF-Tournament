@@ -942,3 +942,15 @@ h2{ margin:0; letter-spacing: -.2px; }
 .link:hover{
   text-decoration: underline;
 }
+
+.badge.success{
+  border-color: rgba(110,240,210,.35);
+  background: rgba(110,240,210,.10);
+}
+
+.badge.danger{
+  border-color: rgba(255,120,170,.45);
+  background: rgba(255,120,170,.12);
+  color: #ffb0b0;
+}
+

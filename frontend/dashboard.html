@@ -81,9 +81,8 @@
           <div class="muted small">Доступные матчи и подача заявок</div>
         </div>
         <div class="seg" id="userMatchTabs">
-          <button class="seg-btn active" data-status="open">open</button>
-          <button class="seg-btn" data-status="closed">closed</button>
-          <button class="seg-btn" data-status="finished">finished</button>
+          <button class="seg-btn active" data-status="open">Открытые</button>
+          <button class="seg-btn" data-status="finished">Завершённые</button>
         </div>
       </div>
 
@@ -160,7 +159,7 @@
       </div>
     </section>
 
-    <!-- ADMIN (NEW STRUCTURED) -->
+    <!-- ADMIN -->
     <section id="view-admin" class="panel glass hidden adminx">
       <div class="adminx-top">
         <div class="adminx-title">
@@ -205,9 +204,8 @@
                 <span class="field-label">Фильтр</span>
                 <select id="mFilter">
                   <option value="all">Все</option>
-                  <option value="open">open</option>
-                  <option value="closed">closed</option>
-                  <option value="finished">finished</option>
+                  <option value="open">Открытые</option>
+                  <option value="finished">Завершённые</option>
                 </select>
               </label>
 
@@ -290,6 +288,7 @@ import { api } from "/static/assets/api.js";
 
 /* ---------- security + helpers ---------- */
 const LIMITS = { TEAM_NAME: 32, MATCH_TITLE: 60 };
+const MAX_TEAM_MEMBERS = 5;
 
 function esc(s){
   return String(s ?? "")
@@ -304,17 +303,35 @@ function clampStr(s, max){
   if (s.length > max) s = s.slice(0, max);
   return s;
 }
+
+function ruMatchStatus(st){
+  st = String(st||"").toLowerCase();
+  if (st === "open") return "Открытый";
+  if (st === "finished") return "Завершён";
+  return st || "—";
+}
+function ruAppStatus(st){
+  st = String(st||"").toLowerCase();
+  if (st === "pending") return "Заявка отправлена";
+  if (st === "approved") return "Одобрена";
+  if (st === "rejected") return "Отклонена";
+  return st || "—";
+}
+function ruMode(m){
+  m = String(m||"").toLowerCase();
+  if (m === "solo") return "Solo";
+  if (m === "team") return "Team";
+  return m || "—";
+}
+
 function ruErrorMessage(msg){
   const m = String(msg || "").toLowerCase();
   if (!m) return "Ошибка. Попробуйте ещё раз.";
   if (m.includes("unauthorized")) return "Нужно войти в аккаунт.";
-  if (m.includes("match not found")) return "Матч не найден.";
-  if (m.includes("match is not open")) return "Матч закрыт для заявок.";
-  if (m.includes("team_id is required")) return "Для командного матча выберите команду.";
-  if (m.includes("you are not a member")) return "Вы не состоите в выбранной команде.";
-  if (m.includes("already finished")) return "Матч уже завершён.";
-  return "Ошибка. Попробуйте ещё раз.";
+  if (m.includes("матч не найден") || m.includes("match not found")) return "Матч не найден.";
+  return String(msg || "Ошибка. Попробуйте ещё раз.");
 }
+
 function showActionRu(action){
   const a = String(action || "");
   const map = {
@@ -325,7 +342,6 @@ function showActionRu(action){
     "apply_match": "Подача заявки",
     "admin_create_match": "Создание матча",
     "admin_update_match": "Обновление матча",
-    "admin_close_match": "Закрытие матча",
     "admin_approve_application": "Заявка одобрена",
     "admin_reject_application": "Заявка отклонена",
     "create_team": "Создание команды",
@@ -387,14 +403,12 @@ document.querySelectorAll(".navbtn").forEach(b=>{
     if (v==="matches") loadMatches(activeStatus());
     if (v==="history") loadHistory();
     if (v==="rating") loadRating();
-    if (v==="admin") {
-      // по умолчанию подгружаем матчи админки
-      loadAdminMatches();
-    }
+    if (v==="admin") loadAdminMatches();
+    if (v==="teams") refreshTeamRuleUI();
   };
 });
 
-/* ---------- user match segmented tabs ---------- */
+/* ---------- user match tabs ---------- */
 function activeStatus(){
   const a = document.querySelector("#userMatchTabs .seg-btn.active");
   return a ? a.dataset.status : "open";
@@ -468,7 +482,7 @@ async function loadMatches(status){
   }
 
   if (!matches.length){
-    out.innerHTML = `<div class="empty">Матчей со статусом <b>${esc(status)}</b> нет</div>`;
+    out.innerHTML = `<div class="empty">Матчей в разделе «<b>${esc(status==="open"?"Открытые":"Завершённые")}</b>» нет</div>`;
     return;
   }
 
@@ -476,10 +490,12 @@ async function loadMatches(status){
 
   out.innerHTML = `<div class="stack">` + matches.map(m=>{
     const appSt = myApps[m.id] || "none";
+    const isOpenMatch = (String(m.status).toLowerCase() === "open");
     const applied = appSt !== "none";
-    const badge = appSt==="none" ? "заявка: —" : `заявка: ${esc(appSt)}`;
 
-    const teamPick = (m.mode==="team") ? `
+    const badge = appSt==="none" ? "заявка: —" : `заявка: ${esc(ruAppStatus(appSt))}`;
+
+    const teamPick = (m.mode==="team" && isOpenMatch && !applied) ? `
       <label class="field inline" style="min-width:240px;">
         <span class="field-label">Команда</span>
         <select data-team="${m.id}">
@@ -488,22 +504,23 @@ async function loadMatches(status){
         </select>
       </label>` : "";
 
-    const btnText = applied ? "Заявка отправлена" : "Подать заявку";
+    const btnText = !isOpenMatch ? "Матч завершён" : (applied ? "Заявка отправлена" : "Подать заявку");
+    const btnDisabled = (!isOpenMatch || applied);
 
     return `
       <div class="item glass inner">
         <div class="item-head">
           <div class="item-title">${esc(m.title)}</div>
           <div class="badges">
-            <span class="badge">${esc(m.status)}</span>
-            <span class="badge">${esc(m.mode)}</span>
+            <span class="badge">${esc(ruMatchStatus(m.status))}</span>
+            <span class="badge">${esc(ruMode(m.mode))}</span>
             <span class="badge">${badge}</span>
           </div>
         </div>
 
         <div class="item-actions">
           ${teamPick}
-          <button class="btn ${applied ? "secondary" : ""}" data-apply="${m.id}" ${applied ? "disabled" : ""}>${btnText}</button>
+          <button class="btn ${btnDisabled ? "secondary" : ""}" data-apply="${m.id}" ${btnDisabled ? "disabled" : ""}>${btnText}</button>
           <div class="small muted"></div>
         </div>
       </div>
@@ -521,6 +538,13 @@ async function loadMatches(status){
       const m = matches.find(x=>x.id===matchId);
       if (!m) return;
 
+      // extra guard
+      if (String(m.status).toLowerCase() !== "open"){
+        msg.textContent = "Нельзя подать заявку на завершённый матч.";
+        msg.classList.add("bad");
+        return;
+      }
+
       let body = {};
       if (m.mode==="team"){
         const sel = card.querySelector(`select[data-team="${matchId}"]`);
@@ -535,7 +559,7 @@ async function loadMatches(status){
 
       try{
         await api(`/matches/${matchId}/apply`, "POST", body);
-        btn.textContent = "Заявка отправлена (pending)";
+        btn.textContent = "Заявка отправлена";
         btn.disabled = true;
         btn.classList.add("secondary");
         showToast("Заявка отправлена ✅", true);
@@ -580,7 +604,11 @@ async function loadOpenTeams(){
   out.innerHTML = `<div class="skeleton">Загрузка...</div>`;
 
   try{
-    const [openRes, myRes] = await Promise.all([ api("/teams/open"), api("/my/teams") ]);
+    const [openRes, myRes] = await Promise.all([
+      api("/teams/open"),
+      api("/my/teams")
+    ]);
+
     const teams = Array.isArray(openRes) ? openRes : (Array.isArray(openRes?.teams) ? openRes.teams : []);
     const myTeams = Array.isArray(myRes) ? myRes : (Array.isArray(myRes?.teams) ? myRes.teams : []);
 
@@ -595,29 +623,47 @@ async function loadOpenTeams(){
     out.innerHTML = `<div class="stack">` + teams.map(t=>{
       const inThisTeam = mySet.has(t.id);
       const members = Array.isArray(t.members) ? t.members : [];
-      const membersLine = t.is_open
-        ? (members.length ? members.map(m=>esc(m.username)).join(", ") : "пока пусто")
-        : "скрыт";
-      const canJoin = (!inThisTeam && !alreadyInAnyTeam);
+      const membersCount = members.length;
+      const isFull = membersCount >= MAX_TEAM_MEMBERS;
+
+      const membersLine = membersCount
+        ? members.map(m=>esc(m.username)).join(", ")
+        : "пока пусто";
+
+      const canJoin = (!inThisTeam && !alreadyInAnyTeam && !isFull);
 
       return `
         <div class="item glass inner">
           <div class="item-head">
-            <div class="item-title">${esc(t.name)}</div>
+            <div>
+              <div class="item-title">${esc(t.name)}</div>
+              <div class="small muted" style="margin-top:6px;">
+                Участники: <b>${membersCount}/${MAX_TEAM_MEMBERS}</b>
+              </div>
+            </div>
+
             <div class="badges">
               <span class="badge">${t.is_open ? "open" : "closed"}</span>
-              ${inThisTeam ? `<span class="badge">вы участник</span>` : ``}
+              ${isFull ? `<span class="badge danger">FULL</span>` : ``}
+              ${inThisTeam ? `<span class="badge success">вы участник</span>` : ``}
             </div>
           </div>
 
-          <div class="small muted" style="margin-top:8px;">
+          <div class="small muted" style="margin-top:10px;">
             Состав: <b>${membersLine}</b>
           </div>
 
-          <div class="item-actions" style="margin-top:10px;">
+          <div class="item-actions" style="margin-top:12px;">
             ${canJoin ? `<button class="btn secondary" data-join="${t.id}">Вступить</button>` : ``}
             ${inThisTeam ? `<button class="btn secondary" data-leave="${t.id}">Выйти</button>` : ``}
-            ${(!inThisTeam && alreadyInAnyTeam) ? `<div class="small muted">Пока вы в команде — вступление в другие недоступно.</div>` : ``}
+
+            ${(!inThisTeam && alreadyInAnyTeam) ? `
+              <div class="small muted">Пока вы в команде — вступление в другие недоступно.</div>
+            ` : ``}
+
+            ${(!inThisTeam && !alreadyInAnyTeam && isFull) ? `
+              <div class="small muted">Команда заполнена (максимум ${MAX_TEAM_MEMBERS}).</div>
+            ` : ``}
           </div>
         </div>
       `;
@@ -728,8 +774,8 @@ async function loadHistory(){
         <div class="item-head">
           <div class="item-title">${esc(m.title)}</div>
           <div class="badges">
-            <span class="badge">${esc(m.status)}</span>
-            <span class="badge">${esc(m.mode)}</span>
+            <span class="badge">${esc(ruMatchStatus(m.status))}</span>
+            <span class="badge">${esc(ruMode(m.mode))}</span>
           </div>
         </div>
       </div>
@@ -754,13 +800,12 @@ async function loadRating(){
     out.innerHTML = `
       <div class="tablewrap">
         <table class="table">
-          <thead><tr><th>#</th><th>Пользователь</th><th>Роль</th><th>Очки</th></tr></thead>
+          <thead><tr><th>#</th><th>Пользователь</th><th>Очки</th></tr></thead>
           <tbody>
             ${arr.map((u,i)=>`
               <tr>
                 <td>${i+1}</td>
                 <td><b>${esc(u.username)}</b></td>
-                <td><span class="badge">${esc(u.role)}</span></td>
                 <td><b>${Number(u.points ?? 0)}</b></td>
               </tr>
             `).join("")}
@@ -773,7 +818,7 @@ async function loadRating(){
 }
 document.getElementById("reloadRating").onclick = loadRating;
 
-/* ---------- admin tabs (segmented) ---------- */
+/* ---------- admin tabs ---------- */
 function setAdminTab(key){
   document.querySelectorAll("#adminTabs .seg-btn").forEach(x=>{
     x.classList.toggle("active", x.dataset.admin===key);
@@ -907,7 +952,7 @@ async function loadAdminApps(){
                 <td><b>${esc(a.match_title ?? a.match ?? "—")}</b></td>
                 <td>${esc(a.username ?? a.user ?? "—")}</td>
                 <td>${esc(a.team_name ?? a.team ?? "—")}</td>
-                <td><span class="badge">${esc(a.status ?? "")}</span></td>
+                <td><span class="badge">${esc(ruAppStatus(a.status ?? ""))}</span></td>
                 <td>
                   <div class="actions">
                     <button class="btn secondary btn-sm" data-ap="${a.id}" ${decided ? "disabled" : ""}>Approve</button>
@@ -945,7 +990,7 @@ async function loadAdminApps(){
   }
 }
 
-/* ---------- admin matches as table (structured) ---------- */
+/* ---------- admin matches ---------- */
 document.getElementById("mCreate").onclick = async()=>{
   let title = document.getElementById("mTitle").value;
   title = clampStr(title, LIMITS.MATCH_TITLE);
@@ -980,43 +1025,49 @@ async function loadAdminMatches(){
           <tr>
             <th style="width:34%;">Матч</th>
             <th style="width:90px;">Режим</th>
-            <th style="width:110px;">Статус</th>
+            <th style="width:140px;">Статус</th>
             <th style="width:210px;">Победитель</th>
             <th style="width:130px;">Очки</th>
             <th style="width:320px;">Действия</th>
           </tr>
         </thead>
         <tbody>
-          ${matches.map(m=>`
-            <tr data-mid="${m.id}">
-              <td><b>${esc(m.title)}</b></td>
-              <td><span class="badge">${esc(m.mode)}</span></td>
-              <td><span class="badge">${esc(m.status)}</span></td>
+          ${matches.map(m=>{
+            const isFinished = String(m.status).toLowerCase()==="finished";
+            return `
+              <tr data-mid="${m.id}">
+                <td><b>${esc(m.title)}</b></td>
+                <td><span class="badge">${esc(ruMode(m.mode))}</span></td>
+                <td><span class="badge">${esc(ruMatchStatus(m.status))}</span></td>
 
-              <td>
-                <select class="winnerSel hidden" data-wu="${m.id}">
-                  <option value="">Победитель (пользователь)</option>
-                </select>
-                <select class="winnerSel hidden" data-wt="${m.id}">
-                  <option value="">Победитель (команда)</option>
-                </select>
-                <div class="small muted hintLine">Нажми «Участники»</div>
-              </td>
+                <td>
+                  <select class="winnerSel ${isFinished ? "hidden" : "hidden"}" data-wu="${m.id}">
+                    <option value="">Победитель (пользователь)</option>
+                  </select>
+                  <select class="winnerSel ${isFinished ? "hidden" : "hidden"}" data-wt="${m.id}">
+                    <option value="">Победитель (команда)</option>
+                  </select>
+                  <div class="small muted hintLine">${isFinished ? "Матч завершён" : "Нажми «Участники»"}</div>
+                </td>
 
-              <td>
-                <input class="bpInput" data-bp="${m.id}" value="0" inputmode="numeric" maxlength="7" style="width:100%;">
-              </td>
+                <td>
+                  <input class="bpInput" data-bp="${m.id}" value="0" inputmode="numeric" maxlength="7" style="width:100%;" ${isFinished ? "disabled" : ""}>
+                </td>
 
-              <td>
-                <div class="actions actions-wide">
-                  <button class="btn secondary btn-sm" data-part="${m.id}">Участники</button>
-                  <button class="btn btn-sm" data-win="${m.id}">Победитель</button>
-                  <button class="btn secondary btn-sm" data-close="${m.id}">Закрыть</button>
-                  <button class="btn secondary btn-sm" data-report="${m.id}">Отчёт</button>
-                </div>
-              </td>
-            </tr>
-          `).join("")}
+                <td>
+                  <div class="actions actions-wide">
+                    ${isFinished ? `
+                      <button class="btn secondary btn-sm" data-report="${m.id}">Отчёт</button>
+                    ` : `
+                      <button class="btn secondary btn-sm" data-part="${m.id}">Участники</button>
+                      <button class="btn btn-sm" data-win="${m.id}">Победитель</button>
+                      <button class="btn secondary btn-sm" data-report="${m.id}">Отчёт</button>
+                    `}
+                  </div>
+                </td>
+              </tr>
+            `;
+          }).join("")}
         </tbody>
       </table>`;
 
@@ -1025,6 +1076,7 @@ async function loadAdminMatches(){
         const id = btn.dataset.part;
         const row = out.querySelector(`tr[data-mid="${id}"]`);
         const hint = row.querySelector(".hintLine");
+        hint.classList.remove("bad");
         hint.textContent = "Загружаю участников...";
 
         const selU = row.querySelector(`select[data-wu="${id}"]`);
@@ -1093,23 +1145,10 @@ async function loadAdminMatches(){
             bonus_points: Number.isFinite(bp) ? bp : 0
           });
           showToast("Победитель установлен ✅", true);
-          btn.disabled = true;
+          await loadAdminMatches();
         }catch(e){
           hint.textContent = ruErrorMessage(e.message);
           hint.classList.add("bad");
-        }
-      };
-    });
-
-    out.querySelectorAll("button[data-close]").forEach(btn=>{
-      btn.onclick = async ()=>{
-        const id = btn.dataset.close;
-        try{
-          await api(`/admin/matches/${id}/close`, "POST", {});
-          showToast("Матч закрыт ✅", true);
-          loadAdminMatches();
-        }catch(e){
-          showToast(ruErrorMessage(e.message), false);
         }
       };
     });
@@ -1163,8 +1202,6 @@ await loadMe();
 await refreshTeamRuleUI();
 setView("matches");
 await loadMatches("open");
-
-// на всякий: если админ и сразу откроет админку — таб уже норм
 setAdminTab("matches");
 </script>
 </body>
