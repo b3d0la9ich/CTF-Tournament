@@ -50,6 +50,14 @@ func qRowTx(ctx context.Context, tx pgx.Tx, q sq.Sqlizer) pgx.Row {
 	return tx.QueryRow(ctx, sql, args...)
 }
 
+func qQueryTx(ctx context.Context, tx pgx.Tx, q sq.Sqlizer) (pgx.Rows, error) {
+	sql, args, err := toSQL(q)
+	if err != nil {
+		return nil, err
+	}
+	return tx.Query(ctx, sql, args...)
+}
+
 func qExecTx(ctx context.Context, tx pgx.Tx, q sq.Sqlizer) (pgconn.CommandTag, error) {
 	sql, args, err := toSQL(q)
 	if err != nil {
