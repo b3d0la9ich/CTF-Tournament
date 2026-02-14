@@ -5,8 +5,12 @@ import (
 	"log"
 	"time"
 
+	sq "github.com/Masterminds/squirrel"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+/* ===================== CONNECT ===================== */
 
 func MustDB(url string) *pgxpool.Pool {
 	cfg, err := pgxpool.ParseConfig(url)
@@ -17,7 +21,6 @@ func MustDB(url string) *pgxpool.Pool {
 
 	var pool *pgxpool.Pool
 
-	// ждём БД до ~30 секунд
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -39,4 +42,52 @@ func MustDB(url string) *pgxpool.Pool {
 	}
 
 	return pool
+}
+
+/* ===================== SQUIRREL HELPERS ===================== */
+
+// ----------- NON-TX -----------
+
+func qExec(ctx context.Context, db *pgxpool.Pool, q sq.Sqlizer) (pgconn.CommandTag, error) {
+	sql, args, err := q.ToSql()
+	if err != nil {
+		return pgconn.CommandTag{}, err
+	}
+	return db.Exec(ctx, sql, args...)
+}
+
+func qQuery(ctx context.Context, db *pgxpool.Pool, q sq.SelectBuilder) (pgx.Rows, error) {
+	sql, args, err := q.ToSql()
+	if err != nil {
+		return nil, err
+	}
+	return db.Query(ctx, sql, args...)
+}
+
+func qRow(ctx context.Context, db *pgxpool.Pool, q sq.SelectBuilder) pgx.Row {
+	sql, args, _ := q.ToSql()
+	return db.QueryRow(ctx, sql, args...)
+}
+
+// ----------- TX -----------
+
+func qExecTx(ctx context.Context, tx pgx.Tx, q sq.Sqlizer) (pgconn.CommandTag, error) {
+	sql, args, err := q.ToSql()
+	if err != nil {
+		return pgconn.CommandTag{}, err
+	}
+	return tx.Exec(ctx, sql, args...)
+}
+
+func qQueryTx(ctx context.Context, tx pgx.Tx, q sq.SelectBuilder) (pgx.Rows, error) {
+	sql, args, err := q.ToSql()
+	if err != nil {
+		return nil, err
+	}
+	return tx.Query(ctx, sql, args...)
+}
+
+func qRowTx(ctx context.Context, tx pgx.Tx, q sq.SelectBuilder) pgx.Row {
+	sql, args, _ := q.ToSql()
+	return tx.QueryRow(ctx, sql, args...)
 }
