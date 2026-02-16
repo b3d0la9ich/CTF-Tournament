@@ -171,6 +171,7 @@
           <button class="seg-btn active" data-admin="matches">Матчи</button>
           <button class="seg-btn" data-admin="apps">Заявки</button>
           <button class="seg-btn" data-admin="users">Пользователи</button>
+          <button class="seg-btn" data-admin="teams">Команды</button>
           <button class="seg-btn" data-admin="logs">Логи</button>
         </div>
       </div>
@@ -244,6 +245,44 @@
             <button class="btn secondary" id="reloadUsers">Обновить</button>
           </div>
           <div id="usersOut" class="adminx-tablewrap"></div>
+        </section>
+
+        <!-- TEAMS (ADMIN) -->
+        <section id="admin-teams" class="adminx-card hidden">
+          <div class="adminx-cardhead">
+            <div>
+              <div class="adminx-cardtitle">Команды</div>
+              <div class="muted small">Добавление участника в закрытую команду (только админ)</div>
+            </div>
+            <button class="btn secondary" id="reloadTeamsAdmin">Обновить</button>
+          </div>
+
+          <div class="adminx-form">
+            <div class="adminx-formgrid" style="grid-template-columns: 1fr 1fr auto;">
+              <label class="field">
+                <span class="field-label">Закрытая команда</span>
+                <select id="adminTeamSel">
+                  <option value="">— выбери команду —</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span class="field-label">Пользователь</span>
+                <select id="adminUserSel">
+                  <option value="">— выбери пользователя —</option>
+                </select>
+              </label>
+
+              <div class="adminx-actions" style="justify-content:flex-start;">
+                <button class="btn" id="adminAddToTeamBtn">Добавить</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="adminx-block">
+            <div class="muted small" style="margin-bottom:10px;">Список команд</div>
+            <div id="teamsAdminOut" class="adminx-tablewrap"></div>
+          </div>
         </section>
 
         <!-- LOGS -->
@@ -350,6 +389,7 @@ function showActionRu(action){
     "admin_set_points": "Изменение очков",
     "admin_delete_user": "Удаление пользователя",
     "admin_set_winner": "Назначение победителя",
+    "admin_add_user_to_team": "Добавление в закрытую команду",
   };
   return map[a] || a || "Событие";
 }
@@ -538,7 +578,6 @@ async function loadMatches(status){
       const m = matches.find(x=>x.id===matchId);
       if (!m) return;
 
-      // extra guard
       if (String(m.status).toLowerCase() !== "open"){
         msg.textContent = "Нельзя подать заявку на завершённый матч.";
         msg.classList.add("bad");
@@ -823,12 +862,13 @@ function setAdminTab(key){
   document.querySelectorAll("#adminTabs .seg-btn").forEach(x=>{
     x.classList.toggle("active", x.dataset.admin===key);
   });
-  ["matches","apps","users","logs"].forEach(k=>{
+  ["matches","apps","users","teams","logs"].forEach(k=>{
     document.getElementById("admin-"+k).classList.toggle("hidden", k!==key);
   });
   if (key==="matches") loadAdminMatches();
   if (key==="apps") loadAdminApps();
   if (key==="users") loadAdminUsers();
+  if (key==="teams") loadAdminTeams();
   if (key==="logs") loadAdminLogs();
 }
 document.querySelectorAll("#adminTabs .seg-btn").forEach(t=>{
@@ -837,6 +877,7 @@ document.querySelectorAll("#adminTabs .seg-btn").forEach(t=>{
 document.getElementById("reloadApps").onclick = loadAdminApps;
 document.getElementById("reloadUsers").onclick = loadAdminUsers;
 document.getElementById("reloadLogs").onclick = loadAdminLogs;
+document.getElementById("reloadTeamsAdmin").onclick = loadAdminTeams;
 
 /* ---------- admin: logs/users/apps ---------- */
 async function loadAdminLogs(){
@@ -989,6 +1030,81 @@ async function loadAdminApps(){
     out.innerHTML = `<div class="empty bad">${esc(ruErrorMessage(e.message))}</div>`;
   }
 }
+
+/* ---------- admin: teams ---------- */
+async function loadAdminTeams(){
+  const out = document.getElementById("teamsAdminOut");
+  const teamSel = document.getElementById("adminTeamSel");
+  const userSel = document.getElementById("adminUserSel");
+
+  out.innerHTML = `<div class="skeleton">Загрузка...</div>`;
+
+  try{
+    const [teamsRes, usersRes] = await Promise.all([
+      api("/admin/teams"),
+      api("/admin/users"),
+    ]);
+
+    const teams = Array.isArray(teamsRes) ? teamsRes : (Array.isArray(teamsRes?.teams) ? teamsRes.teams : []);
+    const users = Array.isArray(usersRes) ? usersRes : (Array.isArray(usersRes?.users) ? usersRes.users : []);
+
+    // селект: только закрытые команды
+    teamSel.innerHTML = `<option value="">— выбери команду —</option>` + teams
+      .filter(t => !t.is_open)
+      .map(t => `<option value="${t.id}">${esc(t.name)} • ${Number(t.members_count ?? 0)}/${MAX_TEAM_MEMBERS}</option>`)
+      .join("");
+
+    // селект: пользователи (кроме админов)
+    userSel.innerHTML = `<option value="">— выбери пользователя —</option>` + users
+      .filter(u => String(u.role || "").toLowerCase() !== "admin")
+      .map(u => `<option value="${u.id}">${esc(u.username)} • points=${Number(u.points ?? 0)}</option>`)
+      .join("");
+
+    if (!teams.length){
+      out.innerHTML = `<div class="empty">Команд нет</div>`;
+      return;
+    }
+
+    out.innerHTML = `
+      <table class="table table-compact">
+        <thead>
+          <tr>
+            <th>Команда</th>
+            <th style="width:120px;">Тип</th>
+            <th style="width:160px;">Участники</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${teams.map(t=>`
+            <tr>
+              <td><b>${esc(t.name)}</b></td>
+              <td><span class="badge">${t.is_open ? "open" : "closed"}</span></td>
+              <td><b>${Number(t.members_count ?? 0)}/${MAX_TEAM_MEMBERS}</b></td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  }catch(e){
+    out.innerHTML = `<div class="empty bad">${esc(ruErrorMessage(e.message))}</div>`;
+  }
+}
+
+document.getElementById("adminAddToTeamBtn").onclick = async ()=>{
+  const teamId = Number(document.getElementById("adminTeamSel").value || "0");
+  const userId = Number(document.getElementById("adminUserSel").value || "0");
+
+  if (!teamId){ showToast("Выбери закрытую команду.", false); return; }
+  if (!userId){ showToast("Выбери пользователя.", false); return; }
+
+  try{
+    await api(`/admin/teams/${teamId}/add-user`, "POST", { user_id: userId });
+    showToast("Пользователь добавлен ✅", true);
+    await loadAdminTeams();
+  }catch(e){
+    showToast(ruErrorMessage(e.message), false);
+  }
+};
 
 /* ---------- admin matches ---------- */
 document.getElementById("mCreate").onclick = async()=>{
