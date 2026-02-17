@@ -44,6 +44,9 @@ func main() {
 
 		api.GET("/rating", internal.Auth(secret), internal.Rating(db))
 
+		// ✅ users search (for owner closed-team add)
+		api.GET("/users/search", internal.Auth(secret), internal.SearchUsers(db))
+
 		// matches/applications/history (status: open|finished|all)
 		api.GET("/matches", internal.Auth(secret), internal.ListMatches(db))
 		api.POST("/matches/:id/apply", internal.Auth(secret), internal.ApplyToMatch(db))
@@ -57,11 +60,13 @@ func main() {
 		api.POST("/teams/:id/join", internal.Auth(secret), internal.JoinTeam(db))
 		api.POST("/teams/:id/leave", internal.Auth(secret), internal.LeaveTeam(db))
 
+		// ✅ owner закрытой команды добавляет участников
+		api.POST("/teams/:id/add-user", internal.Auth(secret), internal.OwnerAddUserToClosedTeam(db))
+
 		// admin
 		admin := api.Group("/admin", internal.Auth(secret), internal.RequireAdmin())
 		{
 			admin.GET("/logs", internal.AdminLogs(db))
-
 			admin.GET("/users", internal.AdminUsers(db))
 			admin.DELETE("/users/:id", internal.AdminDeleteUser(db))
 			admin.POST("/users/:id/points", internal.AdminSetPoints(db))
@@ -69,18 +74,17 @@ func main() {
 			admin.POST("/matches", internal.AdminCreateMatch(db))
 			admin.PUT("/matches/:id", internal.AdminUpdateMatch(db))
 			admin.DELETE("/matches/:id", internal.AdminDeleteMatch(db))
-			admin.GET("/matches", internal.AdminListMatches(db)) // ?status=open|finished|all
-			admin.GET("/matches/:id/participants", internal.AdminMatchParticipants(db)) // only for open
-			admin.POST("/matches/:id/winner", internal.AdminSetWinner(db)) // finish match
-			admin.GET("/matches/:id/report", internal.AdminMatchReport(db))
 
 			admin.GET("/applications", internal.AdminListApplications(db))
 			admin.POST("/applications/:id/approve", internal.AdminApproveApplication(db))
 			admin.POST("/applications/:id/reject", internal.AdminRejectApplication(db))
 
-			// teams admin
+			admin.POST("/matches/:id/winner", internal.AdminSetWinner(db))                       // finish match
+			admin.GET("/matches", internal.AdminListMatches(db))                                // ?status=open|finished|all
+			admin.GET("/matches/:id/participants", internal.AdminMatchParticipants(db))         // only for open
+			admin.GET("/matches/:id/report", internal.AdminMatchReport(db))
+
 			admin.GET("/teams", internal.AdminListTeams(db))
-			admin.POST("/teams/:id/add-user", internal.AdminAddUserToTeam(db))
 		}
 	}
 

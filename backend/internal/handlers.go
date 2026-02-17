@@ -210,7 +210,6 @@ func ApplyToMatch(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		// ✅ заявки только на open
 		if status != "open" {
 			jsonErr(c, 400, "Нельзя подать заявку на завершённый матч")
 			return
@@ -429,10 +428,11 @@ func MyTeams(db *pgxpool.Pool) gin.HandlerFunc {
 			ID      int        `json:"id"`
 			Name    string     `json:"name"`
 			IsOpen  bool       `json:"is_open"`
+			OwnerID int        `json:"owner_id"` // ✅ нужно фронту, чтобы понять owner
 			Members []UserMini `json:"members"`
 		}
 
-		qTeams := sq.Select("t.id", "t.name", "t.is_open").
+		qTeams := sq.Select("t.id", "t.name", "t.is_open", "t.owner_id").
 			From("team_members tm").
 			Join("teams t ON t.id = tm.team_id").
 			Where(sq.Eq{"tm.user_id": userID}).
@@ -451,7 +451,7 @@ func MyTeams(db *pgxpool.Pool) gin.HandlerFunc {
 
 		for rows.Next() {
 			var t TeamOut
-			_ = rows.Scan(&t.ID, &t.Name, &t.IsOpen)
+			_ = rows.Scan(&t.ID, &t.Name, &t.IsOpen, &t.OwnerID)
 			t.Members = []UserMini{}
 			byID[t.ID] = len(teams)
 			teams = append(teams, t)
@@ -592,6 +592,122 @@ func LeaveTeam(db *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		logAction(db, &userID, "leave_team", "Пользователь вышел из команды")
+		c.JSON(200, gin.H{"ok": true})
+	}
+}
+
+/* ===================== ✅ OWNER ADD TO CLOSED TEAM ===================== */
+
+// POST /api/teams/:id/add-user  { "user_id": 123 }
+// Только owner закрытой команды может добавлять участника.
+func OwnerAddUserToClosedTeam(db *pgxpool.Pool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		actor := uid(c)
+		teamID, _ := strconv.Atoi(c.Param("id"))
+		if teamID <= 0 {
+			jsonErr(c, 400, "Некорректная команда")
+			return
+		}
+
+		var req struct {
+			UserID int `json:"user_id"`
+		}
+		if err := c.BindJSON(&req); err != nil || req.UserID <= 0 {
+			jsonErr(c, 400, "Некорректные данные")
+			return
+		}
+
+		ctx := context.Background()
+
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
+			return
+		}
+		defer tx.Rollback(ctx)
+
+		// команда существует? закрытая? actor owner?
+		var isOpen bool
+		var ownerID int
+		qTeam := sq.Select("is_open", "owner_id").
+			From("teams").
+			Where(sq.Eq{"id": teamID}).
+			PlaceholderFormat(sq.Dollar)
+
+		if err := qRowTx(ctx, tx, qTeam).Scan(&isOpen, &ownerID); err != nil {
+			jsonErr(c, 404, "Команда не найдена")
+			return
+		}
+		if isOpen {
+			jsonErr(c, 400, "Это открытая команда — пользователь может вступить сам")
+			return
+		}
+		if ownerID != actor {
+			jsonErr(c, 403, "Только создатель закрытой команды может добавлять участников")
+			return
+		}
+
+		// нельзя добавлять админа
+		var role string
+		qRole := sq.Select("role").
+			From("users").
+			Where(sq.Eq{"id": req.UserID}).
+			PlaceholderFormat(sq.Dollar)
+
+		if err := qRowTx(ctx, tx, qRole).Scan(&role); err != nil {
+			jsonErr(c, 404, "Пользователь не найден")
+			return
+		}
+		if strings.ToLower(strings.TrimSpace(role)) == "admin" {
+			jsonErr(c, 400, "Нельзя добавлять администратора в команду")
+			return
+		}
+
+		// пользователь уже в какой-то команде?
+		has, err := userHasAnyTeam(db, req.UserID)
+		if err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
+			return
+		}
+		if has {
+			jsonErr(c, 400, "Пользователь уже состоит в команде")
+			return
+		}
+
+		// лимит участников
+		qCount := sq.Select("COUNT(*)").
+			From("team_members").
+			Where(sq.Eq{"team_id": teamID}).
+			PlaceholderFormat(sq.Dollar)
+
+		var count int
+		if err := qRowTx(ctx, tx, qCount).Scan(&count); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
+			return
+		}
+		if count >= MaxTeamMembers {
+			jsonErr(c, 400, "В команде уже максимальное количество участников (5)")
+			return
+		}
+
+		// добавляем
+		ins := sq.Insert("team_members").
+			Columns("team_id", "user_id").
+			Values(teamID, req.UserID).
+			Suffix("ON CONFLICT DO NOTHING").
+			PlaceholderFormat(sq.Dollar)
+
+		if _, err := qExecTx(ctx, tx, ins); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
+			return
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
+			return
+		}
+
+		logAction(db, &actor, "owner_add_user_to_team", "Создатель добавил пользователя в закрытую команду")
 		c.JSON(200, gin.H{"ok": true})
 	}
 }
@@ -774,7 +890,6 @@ func AdminCreateMatch(db *pgxpool.Pool) gin.HandlerFunc {
 	}
 }
 
-// ✅ обновляем только title/mode и только пока матч open
 func AdminUpdateMatch(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		actor := uid(c)
@@ -854,7 +969,6 @@ func AdminDeleteMatch(db *pgxpool.Pool) gin.HandlerFunc {
 	}
 }
 
-// GET /api/admin/matches?status=open|finished|all
 func AdminListMatches(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		status := normStatus(c.Query("status"))
@@ -937,7 +1051,6 @@ func AdminListApplications(db *pgxpool.Pool) gin.HandlerFunc {
 	}
 }
 
-// ✅ approve только если матч open
 func AdminApproveApplication(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		actor := uid(c)
@@ -1001,7 +1114,6 @@ func AdminApproveApplication(db *pgxpool.Pool) gin.HandlerFunc {
 	}
 }
 
-// ✅ reject только если матч open
 func AdminRejectApplication(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		actor := uid(c)
@@ -1073,7 +1185,6 @@ func AdminRejectApplication(db *pgxpool.Pool) gin.HandlerFunc {
 
 /* ===================== ADMIN: PARTICIPANTS ===================== */
 
-// ✅ только для open (чтобы выбрать победителя). Для finished — только отчёт.
 func AdminMatchParticipants(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		matchID, _ := strconv.Atoi(c.Param("id"))
@@ -1362,7 +1473,6 @@ func AdminMatchReport(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		// локальные маппинги для отчёта
 		ruMatchStatus := func(s string) string {
 			switch strings.ToLower(strings.TrimSpace(s)) {
 			case "open":
@@ -1370,7 +1480,6 @@ func AdminMatchReport(db *pgxpool.Pool) gin.HandlerFunc {
 			case "finished":
 				return "Завершён"
 			case "closed":
-				// если у тебя ещё где-то осталось closed — покажем по-русски
 				return "Закрыт"
 			default:
 				return s
@@ -1415,7 +1524,6 @@ func AdminMatchReport(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		// заявки: агрегаты (без id)
 		type appAgg struct {
 			Status string
 			Cnt    int
@@ -1441,7 +1549,6 @@ func AdminMatchReport(db *pgxpool.Pool) gin.HandlerFunc {
 			apps = append(apps, r)
 		}
 
-		// участники: количество
 		qCnt := sq.Select("COUNT(*)").
 			From("match_participants").
 			Where(sq.Eq{"match_id": matchID}).
@@ -1450,7 +1557,6 @@ func AdminMatchReport(db *pgxpool.Pool) gin.HandlerFunc {
 		var participants int
 		_ = qRow(ctx, db, qCnt).Scan(&participants)
 
-		// победитель
 		winnerStr := "не определён"
 
 		if winnerTeamID != nil {
@@ -1479,7 +1585,6 @@ func AdminMatchReport(db *pgxpool.Pool) gin.HandlerFunc {
 			}
 		}
 
-		// отчёт
 		title = clampRunes(title, MaxReportLine)
 
 		report := ""
@@ -1503,98 +1608,7 @@ func AdminMatchReport(db *pgxpool.Pool) gin.HandlerFunc {
 	}
 }
 
-func AdminAddUserToTeam(db *pgxpool.Pool) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		actor := uid(c) // админ
-		teamID, _ := strconv.Atoi(c.Param("id"))
-		if teamID <= 0 {
-			jsonErr(c, 400, "Некорректная команда")
-			return
-		}
-
-		var req struct {
-			UserID int `json:"user_id"`
-		}
-		if err := c.BindJSON(&req); err != nil || req.UserID <= 0 {
-			jsonErr(c, 400, "Некорректные данные")
-			return
-		}
-
-		ctx := context.Background()
-
-		// команда существует?
-		var isOpen bool
-		qTeam := sq.Select("is_open").
-			From("teams").
-			Where(sq.Eq{"id": teamID}).
-			PlaceholderFormat(sq.Dollar)
-
-		if err := qRow(ctx, db, qTeam).Scan(&isOpen); err != nil {
-			jsonErr(c, 404, "Команда не найдена")
-			return
-		}
-
-		// ✅ важно: добавлять админом разрешаем ТОЛЬКО в закрытые команды
-		if isOpen {
-			jsonErr(c, 400, "Это открытая команда — пользователь может вступить сам")
-			return
-		}
-
-		// пользователь уже в какой-то команде?
-		has, err := userHasAnyTeam(db, req.UserID)
-		if err != nil {
-			jsonErr(c, 500, "Ошибка сервера")
-			return
-		}
-		if has {
-			jsonErr(c, 400, "Пользователь уже состоит в команде")
-			return
-		}
-
-		tx, err := db.Begin(ctx)
-		if err != nil {
-			jsonErr(c, 500, "Ошибка сервера")
-			return
-		}
-		defer tx.Rollback(ctx)
-
-		// лимит участников
-		qCount := sq.Select("COUNT(*)").
-			From("team_members").
-			Where(sq.Eq{"team_id": teamID}).
-			PlaceholderFormat(sq.Dollar)
-
-		var count int
-		if err := qRowTx(ctx, tx, qCount).Scan(&count); err != nil {
-			jsonErr(c, 500, "Ошибка сервера")
-			return
-		}
-		if count >= MaxTeamMembers {
-			jsonErr(c, 400, "В команде уже максимальное количество участников (5)")
-			return
-		}
-
-		// добавляем
-		ins := sq.Insert("team_members").
-			Columns("team_id", "user_id").
-			Values(teamID, req.UserID).
-			Suffix("ON CONFLICT DO NOTHING").
-			PlaceholderFormat(sq.Dollar)
-
-		if _, err := qExecTx(ctx, tx, ins); err != nil {
-			jsonErr(c, 500, "Ошибка сервера")
-			return
-		}
-
-		if err := tx.Commit(ctx); err != nil {
-			jsonErr(c, 500, "Ошибка сервера")
-			return
-		}
-
-		logAction(db, &actor, "admin_add_user_to_team", "Администратор добавил пользователя в закрытую команду")
-		c.JSON(200, gin.H{"ok": true})
-	}
-}
+/* ===================== ADMIN: TEAMS LIST ===================== */
 
 func AdminListTeams(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -1634,6 +1648,71 @@ func AdminListTeams(db *pgxpool.Pool) gin.HandlerFunc {
 				return
 			}
 			out = append(out, t)
+		}
+
+		c.JSON(200, out)
+	}
+}
+
+/* ===================== ✅ USERS SEARCH (with has_team) ===================== */
+
+// GET /api/users/search?q=part
+// Возвращает [{id, username, has_team}], админов не отдаём, себя не отдаём.
+// Если q < 2 символов — пусто.
+func SearchUsers(db *pgxpool.Pool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		actor := uid(c)
+
+		q := clampRunes(c.Query("q"), 32)
+		q = strings.TrimSpace(q)
+
+		if len([]rune(q)) < 2 {
+			c.JSON(200, []gin.H{})
+			return
+		}
+
+		ctx := context.Background()
+		pat := "%" + q + "%"
+
+		subHas := sq.Select("1").
+			From("team_members tm").
+			Where(sq.Expr("tm.user_id = u.id")).
+			PlaceholderFormat(sq.Dollar)
+
+		query := sq.Select(
+			"u.id",
+			"u.username",
+			sq.Expr("EXISTS(?) AS has_team", subHas),
+		).
+			From("users u").
+			Where(sq.NotEq{"u.role": "admin"}).
+			Where(sq.Expr("u.username ILIKE ?", pat)).
+			Where(sq.NotEq{"u.id": actor}).
+			OrderBy("u.username ASC").
+			Limit(20).
+			PlaceholderFormat(sq.Dollar)
+
+		rows, err := qQuery(ctx, db, query)
+		if err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
+			return
+		}
+		defer rows.Close()
+
+		type U struct {
+			ID       int    `json:"id"`
+			Username string `json:"username"`
+			HasTeam  bool   `json:"has_team"`
+		}
+
+		out := make([]U, 0, 20)
+		for rows.Next() {
+			var u U
+			if err := rows.Scan(&u.ID, &u.Username, &u.HasTeam); err != nil {
+				jsonErr(c, 500, "Ошибка сервера")
+				return
+			}
+			out = append(out, u)
 		}
 
 		c.JSON(200, out)
