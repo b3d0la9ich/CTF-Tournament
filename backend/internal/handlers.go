@@ -1657,8 +1657,9 @@ func AdminListTeams(db *pgxpool.Pool) gin.HandlerFunc {
 /* ===================== ✅ USERS SEARCH (with has_team) ===================== */
 
 // GET /api/users/search?q=part
-// Возвращает [{id, username, has_team}], админов не отдаём, себя не отдаём.
-// Если q < 2 символов — пусто.
+// Ищет пользователей по username (ILIKE), возвращает [{id, username, has_team}, ...]
+// Админов не выдаём. Себя тоже не выдаём.
+// Если q < 2 символов — пусто (чтобы не отдавать всё).
 func SearchUsers(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		actor := uid(c)
@@ -1674,16 +1675,15 @@ func SearchUsers(db *pgxpool.Pool) gin.HandlerFunc {
 		ctx := context.Background()
 		pat := "%" + q + "%"
 
+		// EXISTS subquery: есть ли у пользователя команда
 		subHas := sq.Select("1").
 			From("team_members tm").
 			Where(sq.Expr("tm.user_id = u.id")).
 			PlaceholderFormat(sq.Dollar)
 
-		query := sq.Select(
-			"u.id",
-			"u.username",
-			sq.Expr("EXISTS(?) AS has_team", subHas),
-		).
+		query := sq.Select("u.id", "u.username").
+			// ✅ ВАЖНО: Expr добавляется через Column(...)
+			Column(sq.Expr("EXISTS(?) AS has_team", subHas)).
 			From("users u").
 			Where(sq.NotEq{"u.role": "admin"}).
 			Where(sq.Expr("u.username ILIKE ?", pat)).
@@ -1718,3 +1718,4 @@ func SearchUsers(db *pgxpool.Pool) gin.HandlerFunc {
 		c.JSON(200, out)
 	}
 }
+
