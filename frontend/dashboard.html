@@ -1285,7 +1285,6 @@ async function loadAdminMatches(){
     <table class="table table-compact">
       <thead>
         <tr>
-          <th style="width:70px;">ID</th>
           <th>Название</th>
           <th style="width:120px;">Режим</th>
           <th style="width:140px;">Статус</th>
@@ -1297,7 +1296,6 @@ async function loadAdminMatches(){
           const open = String(m.status).toLowerCase()==="open";
           return `
             <tr>
-              <td class="mono">${m.id}</td>
               <td><b>${esc(m.title)}</b></td>
               <td><span class="badge">${esc(ruMode(m.mode))}</span></td>
               <td><span class="badge">${esc(ruMatchStatus(m.status))}</span></td>
