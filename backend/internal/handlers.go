@@ -1098,11 +1098,58 @@ func AdminApproveApplication(db *pgxpool.Pool) gin.HandlerFunc {
 			PlaceholderFormat(sq.Dollar)
 		_, _ = qExecTx(ctx, tx, upd)
 
-		ins := sq.Insert("match_participants").
-			Columns("match_id", "user_id", "team_id").
-			Values(matchID, userID, teamID).
-			PlaceholderFormat(sq.Dollar)
-		_, _ = qExecTx(ctx, tx, ins)
+		
+		if teamID == nil {
+			// solo (или team-матч без team_id, но у тебя такого не будет)
+			ins := sq.Insert("match_participants").
+				Columns("match_id", "user_id", "team_id").
+				Values(matchID, userID, nil).
+				Suffix("ON CONFLICT DO NOTHING").
+				PlaceholderFormat(sq.Dollar)
+
+			if _, err := qExecTx(ctx, tx, ins); err != nil {
+				jsonErr(c, 500, "Ошибка сервера")
+				return
+			}
+		} else {
+			// ✅ team: добавляем ВСЕХ участников команды
+			qMembers := sq.Select("user_id").
+				From("team_members").
+				Where(sq.Eq{"team_id": *teamID}).
+				PlaceholderFormat(sq.Dollar)
+
+			rows, err := qQueryTx(ctx, tx, qMembers)
+			if err != nil {
+				jsonErr(c, 500, "Ошибка сервера")
+				return
+			}
+			defer rows.Close()
+
+			members := make([]int, 0, 8)
+			for rows.Next() {
+				var id int
+				_ = rows.Scan(&id)
+				if id > 0 {
+					members = append(members, id)
+				}
+			}
+
+			// вставляем каждого участника команды в match_participants
+			// (без raw SQL — всё через squirrel)
+			for _, uid2 := range members {
+				ins := sq.Insert("match_participants").
+					Columns("match_id", "user_id", "team_id").
+					Values(matchID, uid2, *teamID).
+					Suffix("ON CONFLICT DO NOTHING").
+					PlaceholderFormat(sq.Dollar)
+
+				if _, err := qExecTx(ctx, tx, ins); err != nil {
+					jsonErr(c, 500, "Ошибка сервера")
+					return
+				}
+			}
+		}
+
 
 		if err := tx.Commit(ctx); err != nil {
 			jsonErr(c, 500, "Ошибка сервера")
