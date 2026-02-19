@@ -1016,6 +1016,27 @@ document.getElementById("reloadApps").onclick = loadAdminApps;
 document.getElementById("reloadUsers").onclick = loadAdminUsers;
 document.getElementById("reloadLogs").onclick = loadAdminLogs;
 document.getElementById("reloadTeamsAdmin").onclick = loadAdminTeams;
+document.getElementById("mCreate").onclick = async ()=>{
+  const title = clampStr(document.getElementById("mTitle").value, LIMITS.MATCH_TITLE);
+  const mode = document.getElementById("mMode").value;
+
+  if (!title){ showToast("Введите название матча.", false); return; }
+
+  try{
+    await api("/admin/matches", "POST", { title, mode });
+    showToast("Матч создан ✅", true);
+    document.getElementById("mTitle").value = "";
+    await loadAdminMatches();
+    await loadMatches(activeStatus());
+  }catch(e){
+    showToast(ruErrorMessage(e.message), false);
+  }
+};
+
+document.getElementById("mListAll").onclick = async ()=>{
+  await loadAdminMatches();
+};
+
 
 /* ----- admin loaders (тот же код что у тебя был, не менял смысл) ----- */
 async function loadAdminLogs(){
@@ -1241,10 +1262,168 @@ document.getElementById("adminAddToTeamBtn").onclick = async ()=>{
   }
 };
 
-async function loadAdminMatches(){ /* оставь как у тебя было (без изменений логики) */
+async function loadAdminMatches(){
   const out = document.getElementById("matchesAdminOut");
-  out.innerHTML = `<div class="empty muted">Открой твой старый код loadAdminMatches сюда (он не менялся)</div>`;
+  out.innerHTML = `<div class="skeleton">Загрузка матчей...</div>`;
+
+  let matches = [];
+  try{
+    const st = document.getElementById("mFilter").value || "all";
+    const res = await api(`/admin/matches?status=${encodeURIComponent(st)}`);
+    matches = Array.isArray(res) ? res : (Array.isArray(res?.matches) ? res.matches : []);
+  }catch(e){
+    out.innerHTML = `<div class="empty bad">${esc(ruErrorMessage(e.message))}</div>`;
+    return;
+  }
+
+  if (!matches.length){
+    out.innerHTML = `<div class="empty">Матчей нет</div>`;
+    return;
+  }
+
+  out.innerHTML = `
+    <table class="table table-compact">
+      <thead>
+        <tr>
+          <th style="width:70px;">ID</th>
+          <th>Название</th>
+          <th style="width:120px;">Режим</th>
+          <th style="width:140px;">Статус</th>
+          <th style="width:420px;">Действия</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${matches.map(m=>{
+          const open = String(m.status).toLowerCase()==="open";
+          return `
+            <tr>
+              <td class="mono">${m.id}</td>
+              <td><b>${esc(m.title)}</b></td>
+              <td><span class="badge">${esc(ruMode(m.mode))}</span></td>
+              <td><span class="badge">${esc(ruMatchStatus(m.status))}</span></td>
+              <td>
+                <div class="actions" style="flex-wrap:wrap;">
+                  <button class="btn secondary btn-sm" data-part="${m.id}" ${open ? "" : "disabled"}>Участники</button>
+                  <button class="btn secondary btn-sm" data-win="${m.id}" ${open ? "" : "disabled"}>Победитель</button>
+                  <button class="btn secondary btn-sm" data-report="${m.id}">Отчёт</button>
+                  <button class="btn secondary btn-sm" data-delmatch="${m.id}" ${open ? "" : "disabled"}>Удалить</button>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+
+  // ---- report ----
+  out.querySelectorAll("button[data-report]").forEach(b=>b.onclick=async()=>{
+    const id = b.dataset.report;
+    try{
+      const res = await api(`/admin/matches/${id}/report`);
+      const rep = (res && typeof res==="object") ? (res.report ?? "") : "";
+      document.getElementById("reportText").textContent = rep || "Пусто.";
+      document.getElementById("reportCard").classList.remove("hidden");
+      // листаем к карточке отчёта
+      document.getElementById("reportCard").scrollIntoView({behavior:"smooth", block:"start"});
+    }catch(e){
+      showToast(ruErrorMessage(e.message), false);
+    }
+  });
+
+  // ---- participants ----
+  out.querySelectorAll("button[data-part]").forEach(b=>b.onclick=async()=>{
+    const id = b.dataset.part;
+    try{
+      const res = await api(`/admin/matches/${id}/participants`);
+      const mode = String(res?.match?.mode || "").toLowerCase();
+
+      let text = `УЧАСТНИКИ (match #${id})\n\n`;
+      if (mode === "solo"){
+        const users = Array.isArray(res?.users) ? res.users : [];
+        if (!users.length) text += "- нет\n";
+        else users.forEach(u=>{
+          text += `- ${u.username} (points=${Number(u.points ?? 0)})\n`;
+        });
+      } else {
+        const teams = Array.isArray(res?.teams) ? res.teams : [];
+        if (!teams.length) text += "- нет\n";
+        else teams.forEach(t=>{
+          text += `\n[${t.name}]\n`;
+          (t.members||[]).forEach(u=>{
+            text += `- ${u.username} (points=${Number(u.points ?? 0)})\n`;
+          });
+        });
+      }
+
+      document.getElementById("reportText").textContent = text;
+      document.getElementById("reportCard").classList.remove("hidden");
+      document.getElementById("reportCard").scrollIntoView({behavior:"smooth", block:"start"});
+    }catch(e){
+      showToast(ruErrorMessage(e.message), false);
+    }
+  });
+
+  // ---- set winner ----
+  out.querySelectorAll("button[data-win]").forEach(b=>b.onclick=async()=>{
+    const id = b.dataset.win;
+
+    // подтянем участников, чтобы выбрать корректно
+    let res;
+    try{
+      res = await api(`/admin/matches/${id}/participants`);
+    }catch(e){
+      showToast(ruErrorMessage(e.message), false);
+      return;
+    }
+
+    const mode = String(res?.match?.mode || "").toLowerCase();
+    const bonus = Number(prompt("Сколько бонус-очков начислить победителю(ям)?", "100"));
+    if (!Number.isFinite(bonus) || bonus < 0) { showToast("Некорректные очки", false); return; }
+
+    try{
+      if (mode === "solo"){
+        const users = Array.isArray(res?.users) ? res.users : [];
+        if (!users.length){ showToast("Нет участников", false); return; }
+
+        const list = users.map(u=>`${u.id}:${u.username}`).join(", ");
+        const chosen = Number(prompt(`ID победителя (solo). Доступно: ${list}`, String(users[0].id)));
+        if (!Number.isFinite(chosen) || chosen<=0){ showToast("Некорректный ID", false); return; }
+
+        await api(`/admin/matches/${id}/winner`, "POST", { winner_user_id: chosen, bonus_points: bonus });
+      } else {
+        const teams = Array.isArray(res?.teams) ? res.teams : [];
+        if (!teams.length){ showToast("Нет команд-участников", false); return; }
+
+        const list = teams.map(t=>`${t.id}:${t.name}`).join(", ");
+        const chosen = Number(prompt(`ID победившей команды (team). Доступно: ${list}`, String(teams[0].id)));
+        if (!Number.isFinite(chosen) || chosen<=0){ showToast("Некорректный ID", false); return; }
+
+        await api(`/admin/matches/${id}/winner`, "POST", { winner_team_id: chosen, bonus_points: bonus });
+      }
+
+      showToast("Матч завершён ✅", true);
+      loadAdminMatches();
+      loadMatches(activeStatus()); // обновим и юзерскую часть, если кто-то смотрит
+    }catch(e){
+      showToast(ruErrorMessage(e.message), false);
+    }
+  });
+
+  // ---- delete match ----
+  out.querySelectorAll("button[data-delmatch]").forEach(b=>b.onclick=async()=>{
+    const id = b.dataset.delmatch;
+    if (!confirm(`Удалить матч #${id}? (только если он open)`)) return;
+    try{
+      await api(`/admin/matches/${id}`, "DELETE");
+      showToast("Матч удалён ✅", true);
+      loadAdminMatches();
+    }catch(e){
+      showToast(ruErrorMessage(e.message), false);
+    }
+  });
 }
+
 
 document.getElementById("closeReport").onclick = ()=>{
   document.getElementById("reportCard").classList.add("hidden");
