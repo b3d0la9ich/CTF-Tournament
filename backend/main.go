@@ -85,6 +85,9 @@ func main() {
 			admin.GET("/matches/:id/report", internal.AdminMatchReport(db))
 
 			admin.GET("/teams", internal.AdminListTeams(db))
+
+			admin.GET("/teams/:id/members", internal.AdminTeamMembers(db))
+
 		}
 	}
 

@@ -1161,6 +1161,69 @@ func AdminApproveApplication(db *pgxpool.Pool) gin.HandlerFunc {
 	}
 }
 
+// GET /api/admin/teams/:id/members
+// Возвращает состав ТОЛЬКО если команда открытая
+func AdminTeamMembers(db *pgxpool.Pool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		teamID, _ := strconv.Atoi(c.Param("id"))
+		if teamID <= 0 {
+			jsonErr(c, 400, "Некорректная команда")
+			return
+		}
+
+		ctx := context.Background()
+
+		var isOpen bool
+		qTeam := sq.Select("is_open").
+			From("teams").
+			Where(sq.Eq{"id": teamID}).
+			PlaceholderFormat(sq.Dollar)
+
+		if err := qRow(ctx, db, qTeam).Scan(&isOpen); err != nil {
+			jsonErr(c, 404, "Команда не найдена")
+			return
+		}
+
+		if !isOpen {
+			jsonErr(c, 403, "Состав закрытой команды недоступен")
+			return
+		}
+
+		qMembers := sq.Select("u.id", "u.username", "u.points").
+			From("team_members tm").
+			Join("users u ON u.id = tm.user_id").
+			Where(sq.Eq{"tm.team_id": teamID}).
+			OrderBy("u.username ASC").
+			PlaceholderFormat(sq.Dollar)
+
+		rows, err := qQuery(ctx, db, qMembers)
+		if err != nil {
+			jsonErr(c, 500, "Ошибка сервера")
+			return
+		}
+		defer rows.Close()
+
+		type U struct {
+			ID       int    `json:"id"`
+			Username string `json:"username"`
+			Points   int    `json:"points"`
+		}
+
+		out := []U{}
+		for rows.Next() {
+			var u U
+			if err := rows.Scan(&u.ID, &u.Username, &u.Points); err != nil {
+				jsonErr(c, 500, "Ошибка сервера")
+				return
+			}
+			out = append(out, u)
+		}
+
+		c.JSON(200, out)
+	}
+}
+
+
 func AdminRejectApplication(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		actor := uid(c)

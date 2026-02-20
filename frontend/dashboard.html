@@ -214,6 +214,7 @@
           <button class="seg-btn active" data-admin="matches">Матчи</button>
           <button class="seg-btn" data-admin="apps">Заявки</button>
           <button class="seg-btn" data-admin="users">Пользователи</button>
+          <button class="seg-btn" data-admin="teams">Команды</button>
           <button class="seg-btn" data-admin="logs">Логи</button>
         </div>
       </div>
@@ -294,31 +295,9 @@
           <div class="adminx-cardhead">
             <div>
               <div class="adminx-cardtitle">Команды</div>
-              <div class="muted small">Добавление участника в закрытую команду (только админ)</div>
+              <div class="muted small">Список всех команд (только просмотр)</div>
             </div>
             <button class="btn secondary" id="reloadTeamsAdmin">Обновить</button>
-          </div>
-
-          <div class="adminx-form">
-            <div class="adminx-formgrid" style="grid-template-columns: 1fr 1fr auto;">
-              <label class="field">
-                <span class="field-label">Закрытая команда</span>
-                <select id="adminTeamSel">
-                  <option value="">— выбери команду —</option>
-                </select>
-              </label>
-
-              <label class="field">
-                <span class="field-label">Пользователь</span>
-                <select id="adminUserSel">
-                  <option value="">— выбери пользователя —</option>
-                </select>
-              </label>
-
-              <div class="adminx-actions" style="justify-content:flex-start;">
-                <button class="btn" id="adminAddToTeamBtn">Добавить</button>
-              </div>
-            </div>
           </div>
 
           <div class="adminx-block">
@@ -326,6 +305,7 @@
             <div id="teamsAdminOut" class="adminx-tablewrap"></div>
           </div>
         </section>
+
 
         <!-- LOGS -->
         <section id="admin-logs" class="adminx-card hidden">
@@ -1191,29 +1171,11 @@ async function loadAdminApps(){
 
 async function loadAdminTeams(){
   const out = document.getElementById("teamsAdminOut");
-  const teamSel = document.getElementById("adminTeamSel");
-  const userSel = document.getElementById("adminUserSel");
-
   out.innerHTML = `<div class="skeleton">Загрузка...</div>`;
 
   try{
-    const [teamsRes, usersRes] = await Promise.all([
-      api("/admin/teams"),
-      api("/admin/users"),
-    ]);
-
+    const teamsRes = await api("/admin/teams");
     const teams = Array.isArray(teamsRes) ? teamsRes : (Array.isArray(teamsRes?.teams) ? teamsRes.teams : []);
-    const users = Array.isArray(usersRes) ? usersRes : (Array.isArray(usersRes?.users) ? usersRes.users : []);
-
-    teamSel.innerHTML = `<option value="">— выбери команду —</option>` + teams
-      .filter(t => !t.is_open)
-      .map(t => `<option value="${t.id}">${esc(t.name)} • ${Number(t.members_count ?? 0)}/${MAX_TEAM_MEMBERS}</option>`)
-      .join("");
-
-    userSel.innerHTML = `<option value="">— выбери пользователя —</option>` + users
-      .filter(u => String(u.role || "").toLowerCase() !== "admin")
-      .map(u => `<option value="${u.id}">${esc(u.username)} • points=${Number(u.points ?? 0)}</option>`)
-      .join("");
 
     if (!teams.length){
       out.innerHTML = `<div class="empty">Команд нет</div>`;
@@ -1227,6 +1189,7 @@ async function loadAdminTeams(){
             <th>Команда</th>
             <th style="width:120px;">Тип</th>
             <th style="width:160px;">Участники</th>
+            <th style="width:120px;">Состав</th>
           </tr>
         </thead>
         <tbody>
@@ -1235,31 +1198,79 @@ async function loadAdminTeams(){
               <td><b>${esc(t.name)}</b></td>
               <td><span class="badge">${t.is_open ? "open" : "closed"}</span></td>
               <td><b>${Number(t.members_count ?? 0)}/${MAX_TEAM_MEMBERS}</b></td>
+              <td>
+                ${t.is_open
+                  ? `<button class="btn secondary btn-sm" data-show-members="${t.id}">Показать</button>`
+                  : `<span class="muted">—</span>`}
+              </td>
             </tr>
           `).join("")}
         </tbody>
       </table>
     `;
+
+    // ✅ ВАЖНО: после рендера навешиваем обработчики
+    out.querySelectorAll("button[data-show-members]").forEach(btn=>{
+      btn.onclick = async () => {
+        const teamID = Number(btn.dataset.showMembers || "0");
+        if (!teamID) return;
+
+        btn.disabled = true;
+        const old = btn.textContent;
+        btn.textContent = "Загрузка...";
+
+        try{
+          const members = await api(`/admin/teams/${teamID}/members`);
+          if (!members.length){
+            showToast("В команде нет участников", false);
+            return;
+          }
+
+          const text = members.map(m => `${m.username} • points=${Number(m.points ?? 0)}`).join("\n");
+          alert("Состав команды:\n\n" + text);
+        }catch(e){
+          showToast(ruErrorMessage(e.message), false);
+        }finally{
+          btn.disabled = false;
+          btn.textContent = old;
+        }
+      };
+    });
+
   }catch(e){
     out.innerHTML = `<div class="empty bad">${esc(ruErrorMessage(e.message))}</div>`;
   }
 }
 
-document.getElementById("adminAddToTeamBtn").onclick = async ()=>{
-  const teamId = Number(document.getElementById("adminTeamSel").value || "0");
-  const userId = Number(document.getElementById("adminUserSel").value || "0");
-
-  if (!teamId){ showToast("Выбери закрытую команду.", false); return; }
-  if (!userId){ showToast("Выбери пользователя.", false); return; }
+async function showTeamMembers(teamID, btn){
+  btn.disabled = true;
+  btn.innerText = "Загрузка...";
 
   try{
-    await api(`/admin/teams/${teamId}/add-user`, "POST", { user_id: userId });
-    showToast("Пользователь добавлен ✅", true);
-    await loadAdminTeams();
+    const members = await api(`/admin/teams/${teamID}/members`);
+
+    if (!members.length){
+      alert("В команде нет участников");
+      return;
+    }
+
+    const text = members.map(m =>
+      `${m.username} (points: ${m.points})`
+    ).join("\n");
+
+    alert("Состав команды:\n\n" + text);
+
   }catch(e){
-    showToast(ruErrorMessage(e.message), false);
+    alert(ruErrorMessage(e.message));
+  }finally{
+    btn.disabled = false;
+    btn.innerText = "Показать";
   }
-};
+}
+
+
+
+
 
 async function loadAdminMatches(){
   const out = document.getElementById("matchesAdminOut");
